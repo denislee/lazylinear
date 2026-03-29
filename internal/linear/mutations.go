@@ -1,0 +1,17 @@
+package linear
+
+const mutationCreateIssue = `mutation($input: IssueCreateInput!) {
+	issueCreate(input: $input) {
+		success
+		issue {` + issueFragment + `
+		}
+	}
+}`
+
+const mutationUpdateIssue = `mutation($id: String!, $input: IssueUpdateInput!) {
+	issueUpdate(id: $id, input: $input) {
+		success
+		issue {` + issueFragment + `
+		}
+	}
+}`
