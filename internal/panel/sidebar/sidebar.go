@@ -49,6 +49,7 @@ func New() Model {
 		spinner: s,
 		filters: []string{
 			"My Issues",
+			"My Unlabeled Issues",
 			"My Issues + Active",
 			"My Issues + Backlog",
 			"All Issues",

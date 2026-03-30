@@ -83,6 +83,11 @@ type FilterSelectedMsg struct {
 	Filter string // filter name: "My Issues", "All Issues", "Active", "Backlog"
 }
 
+// AutoTagIssuesMsg is sent to auto-tag issues with Gemini CLI.
+type AutoTagIssuesMsg struct {
+	Issues []linear.Issue
+}
+
 // RefreshIssuesMsg is sent when the issue list wants to refresh with the current filter.
 type RefreshIssuesMsg struct{}
 

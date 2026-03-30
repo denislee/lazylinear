@@ -21,6 +21,7 @@ type IssueCreateConfirmedMsg struct {
 	Title       string
 	Description string
 	Priority    int
+	StateID     *string
 	AssigneeID  *string
 	ProjectID   *string
 	CycleID     *string
@@ -34,13 +35,15 @@ type CreateIssueModel struct {
 	titleInput     textinput.Model
 	descInput      textarea.Model
 	priorityCursor int
+	statusCursor   int
 	assigneeCursor int
 	projectCursor  int
 	cycleCursor    int
-	focusIndex     int // 0=title, 1=desc, 2=priority, 3=assignee, 4=project, 5=cycle, 6=submit
+	focusIndex     int // 0=title, 1=desc, 2=priority, 3=status, 4=assignee, 5=project, 6=cycle, 7=submit
 	teamID         string
 	err            string
 
+	states       []linear.WorkflowState
 	assignees    []linear.User
 	projects     []linear.Project
 	cycles       []linear.Cycle
@@ -80,6 +83,7 @@ func (m *CreateIssueModel) SetMetadata(meta *linear.TeamMetadata) {
 	}
 
 	m.assignees = meta.Members
+	m.states = meta.States
 
 	var myProjects []linear.Project
 	for _, p := range meta.Projects {
@@ -126,17 +130,17 @@ func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
 			}
 
 		case "tab":
-			m.focusIndex = (m.focusIndex + 1) % 7
+			m.focusIndex = (m.focusIndex + 1) % 8
 			m.updateFocus()
 			return m, nil
 
 		case "shift+tab":
-			m.focusIndex = (m.focusIndex - 1 + 7) % 7
+			m.focusIndex = (m.focusIndex - 1 + 8) % 8
 			m.updateFocus()
 			return m, nil
 
 		case "enter":
-			if m.focusIndex == 6 && !m.listsLoading {
+			if m.focusIndex == 7 && !m.listsLoading {
 				return m.submit()
 			}
 
@@ -154,7 +158,22 @@ func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case 3: // Assignee
+			case 3: // Status
+				if m.listsLoading {
+					return m, nil
+				}
+				switch key {
+				case "j", "down", "ctrl+n":
+					if m.statusCursor < len(m.states) {
+						m.statusCursor++
+					}
+				case "k", "up", "ctrl+p":
+					if m.statusCursor > 0 {
+						m.statusCursor--
+					}
+				}
+				return m, nil
+			case 4: // Assignee
 				if m.listsLoading {
 					return m, nil
 				}
@@ -169,7 +188,7 @@ func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case 4: // Project
+			case 5: // Project
 				if m.listsLoading {
 					return m, nil
 				}
@@ -184,7 +203,7 @@ func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case 5: // Cycle
+			case 6: // Cycle
 				if m.listsLoading {
 					return m, nil
 				}
@@ -246,6 +265,12 @@ func (m CreateIssueModel) submit() (CreateIssueModel, tea.Cmd) {
 
 	desc := strings.TrimSpace(m.descInput.Value())
 	
+	var stateID *string
+	if m.statusCursor > 0 {
+		id := m.states[m.statusCursor-1].ID
+		stateID = &id
+	}
+
 	var assigneeID *string
 	if m.assigneeCursor > 0 {
 		id := m.assignees[m.assigneeCursor-1].ID
@@ -270,6 +295,7 @@ func (m CreateIssueModel) submit() (CreateIssueModel, tea.Cmd) {
 			Title:       title,
 			Description: desc,
 			Priority:    m.priorityCursor,
+			StateID:     stateID,
 			AssigneeID:  assigneeID,
 			ProjectID:   projectID,
 			CycleID:     cycleID,
@@ -319,9 +345,26 @@ func (m CreateIssueModel) View() string {
 
 	loadingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666")).Italic(true)
 
+	// Status
+	statusLabel := labelStyle.Render("Status:  ")
+	if m.focusIndex == 3 {
+		statusLabel = focusedLabel.Render("Status:  ")
+	}
+	b.WriteString(statusLabel + " ")
+	if m.listsLoading {
+		b.WriteString(loadingStyle.Render("Loading..."))
+	} else {
+		statusName := "Default"
+		if m.statusCursor > 0 {
+			statusName = m.states[m.statusCursor-1].Name
+		}
+		b.WriteString(renderDropdown(statusName, m.focusIndex == 3))
+	}
+	b.WriteString("\n\n")
+
 	// Assignee
 	assLabel := labelStyle.Render("Assignee:")
-	if m.focusIndex == 3 {
+	if m.focusIndex == 4 {
 		assLabel = focusedLabel.Render("Assignee:")
 	}
 	b.WriteString(assLabel + " ")
@@ -332,13 +375,13 @@ func (m CreateIssueModel) View() string {
 		if m.assigneeCursor > 0 {
 			assigneeName = m.assignees[m.assigneeCursor-1].Name
 		}
-		b.WriteString(renderDropdown(assigneeName, m.focusIndex == 3))
+		b.WriteString(renderDropdown(assigneeName, m.focusIndex == 4))
 	}
 	b.WriteString("\n\n")
 
 	// Project
 	projLabel := labelStyle.Render("Project: ")
-	if m.focusIndex == 4 {
+	if m.focusIndex == 5 {
 		projLabel = focusedLabel.Render("Project: ")
 	}
 	b.WriteString(projLabel + " ")
@@ -349,13 +392,13 @@ func (m CreateIssueModel) View() string {
 		if m.projectCursor > 0 {
 			projectName = m.projects[m.projectCursor-1].Name
 		}
-		b.WriteString(renderDropdown(projectName, m.focusIndex == 4))
+		b.WriteString(renderDropdown(projectName, m.focusIndex == 5))
 	}
 	b.WriteString("\n\n")
 
 	// Cycle
 	cycLabel := labelStyle.Render("Cycle:   ")
-	if m.focusIndex == 5 {
+	if m.focusIndex == 6 {
 		cycLabel = focusedLabel.Render("Cycle:   ")
 	}
 	b.WriteString(cycLabel + " ")
@@ -370,13 +413,13 @@ func (m CreateIssueModel) View() string {
 				cycleName = c.Name
 			}
 		}
-		b.WriteString(renderDropdown(cycleName, m.focusIndex == 5))
+		b.WriteString(renderDropdown(cycleName, m.focusIndex == 6))
 	}
 	b.WriteString("\n\n")
 
 	// Submit button
 	submitStyle := lipgloss.NewStyle().Padding(0, 2)
-	if m.focusIndex == 6 {
+	if m.focusIndex == 7 {
 		submitStyle = submitStyle.
 			Background(lipgloss.Color("#7D56F4")).
 			Foreground(lipgloss.Color("#FFFFFF")).

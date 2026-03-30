@@ -28,15 +28,21 @@ var (
 			Foreground(lipgloss.Color("#FF0000")).
 			Background(lipgloss.Color("#333")).
 			Bold(true)
+
+	successStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FF00")).
+			Background(lipgloss.Color("#333")).
+			Bold(true)
 )
 
 // Model is the status bar panel.
 type Model struct {
-	width    int
-	teamName string
-	filter   string
-	hints    string
-	errMsg   string
+	width      int
+	teamName   string
+	filter     string
+	hints      string
+	errMsg     string
+	successMsg string
 }
 
 // New creates a new status bar model.
@@ -64,11 +70,23 @@ func (m *Model) SetFilter(filter string) {
 // SetError sets an error message to display.
 func (m *Model) SetError(err string) {
 	m.errMsg = err
+	m.successMsg = ""
 }
 
 // ClearError clears the error message.
 func (m *Model) ClearError() {
 	m.errMsg = ""
+}
+
+// SetSuccess sets a success message to display.
+func (m *Model) SetSuccess(msg string) {
+	m.successMsg = msg
+	m.errMsg = ""
+}
+
+// ClearSuccess clears the success message.
+func (m *Model) ClearSuccess() {
+	m.successMsg = ""
 }
 
 // SetHints updates the key hint text.
@@ -89,6 +107,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 	case appmsg.ErrorMsg:
 		m.errMsg = msg.Err.Error()
+		m.successMsg = ""
 	}
 	return m, nil
 }
@@ -103,6 +122,8 @@ func (m Model) View() tea.View {
 	var left string
 	if m.errMsg != "" {
 		left = errorStyle.Render(fmt.Sprintf(" ERROR: %s", m.errMsg))
+	} else if m.successMsg != "" {
+		left = successStyle.Render(fmt.Sprintf(" %s", m.successMsg))
 	} else if m.teamName != "" {
 		breadcrumb := m.teamName
 		if m.filter != "" {

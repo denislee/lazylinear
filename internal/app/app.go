@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"charm.land/bubbles/v2/spinner"
@@ -26,21 +27,22 @@ const (
 
 // App is the root Bubble Tea model.
 type App struct {
-	ctx          *AppContext
-	sidebar      sidebar.Model
-	mainPanel    mainpanel.Model
-	statusBar    statusbar.Model
-	modal        modal.Model
-	layout       Layout
-	focus        PanelID
-	ready        bool
-	showHelp     bool
+	ctx                *AppContext
+	sidebar            sidebar.Model
+	mainPanel          mainpanel.Model
+	statusBar          statusbar.Model
+	modal              modal.Model
+	layout             Layout
+	focus              PanelID
+	ready              bool
+	showHelp           bool
 	activeFilter       string        // current filter: "My Issues", "All Issues", "Active", "Backlog"
 	pendingIssue       *linear.Issue // issue awaiting workflow states for status change
 	pendingEditIssue   *linear.Issue // issue awaiting metadata for edit modal
 	pendingCreateIssue bool          // whether we are waiting for metadata to create an issue
-	}
-	// NewApp creates a new root App model.
+}
+
+// NewApp creates a new root App model.
 func NewApp(client *linear.Client, state *config.State) App {
 	ctx := &AppContext{
 		Client: client,
@@ -257,6 +259,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, tea.Batch(cmds...)
 
+	case AutoTagIssuesMsg:
+		return a, a.autoTagIssues(msg.Issues)
+
 	case RefreshIssuesMsg:
 		updatedMain, cmd := a.mainPanel.Update(msg)
 		a.mainPanel = updatedMain.(mainpanel.Model)
@@ -303,6 +308,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case OpenCreateIssueMsg:
 		// Open modal immediately, then lazy-load lists.
+		a.statusBar.ClearSuccess()
 		if a.ctx.CurrentTeam != nil {
 			a.modal.OpenCreateIssue(a.ctx.CurrentTeam.ID, a.ctx.CurrentUser)
 			a.pendingCreateIssue = true
@@ -333,6 +339,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				filters := []string{
 					"My Issues",
+					"My Unlabeled Issues",
 					"My Issues + Active",
 					"My Issues + Backlog",
 				}
@@ -356,7 +363,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				filters = append(filters, "---")
 				filters = append(filters, "All Issues", "Active", "Backlog")
-				
+
 				a.sidebar.SetFilters(filters)
 
 				// Fetch issue counts for all non-separator filters.
@@ -388,6 +395,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case modal.IssueCreateConfirmedMsg:
 		a.modal.Close()
+		a.statusBar.SetSuccess("Creating issue...")
 		cmds = append(cmds, a.createIssue(msg))
 		return a, tea.Batch(cmds...)
 
@@ -406,6 +414,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 
 	case IssueCreatedMsg:
+		a.statusBar.SetSuccess(fmt.Sprintf("Issue %s created successfully", msg.Issue.Identifier))
 		// Refresh the issue list with current filter.
 		if a.ctx.CurrentTeam != nil {
 			cmds = append(cmds, a.fetchIssues(a.ctx.CurrentTeam.ID, a.activeFilter))
@@ -443,7 +452,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 	}
 
-	return a, nil
+	// Forward unhandled messages to the main panel so internal messages
+	// like list.FilterMatchesMsg reach the list component.
+	updatedMain, cmd := a.mainPanel.Update(msg)
+	a.mainPanel = updatedMain.(mainpanel.Model)
+	return a, cmd
 }
 
 // View implements tea.Model.
@@ -499,7 +512,7 @@ func (a *App) cycleFocus(direction int) {
 		if a.focus == PanelMain {
 			a.focus = PanelSidebar
 		} else {
-			a.focus = PanelMain
+			a.focus = PanelSidebar
 		}
 	}
 
@@ -587,6 +600,24 @@ func buildIssueFilter(filterName string, currentUser *linear.User, projects []li
 			return map[string]any{
 				"assignee": map[string]any{
 					"id": map[string]any{"eq": currentUser.ID},
+				},
+			}
+		}
+		return nil
+	case "My Unlabeled Issues":
+		if currentUser != nil {
+			return map[string]any{
+				"and": []map[string]any{
+					{
+						"assignee": map[string]any{
+							"id": map[string]any{"eq": currentUser.ID},
+						},
+					},
+					{
+						"labels": map[string]any{
+							"null": true,
+						},
+					},
 				},
 			}
 		}
@@ -757,7 +788,11 @@ func (a *App) updateStatusBarHints() {
 		a.statusBar.SetHints("j/k: navigate | enter: select | l: select & focus | c: create | v: compact | tab: issues | ?: help")
 	case PanelMain:
 		if a.mainPanel.Focused() {
-			a.statusBar.SetHints("j/k: navigate | /: filter | enter: open | c: create | e: edit | s: status | v: compact | ?: help")
+			hints := "j/k: navigate | /: filter | enter: open | c: create | e: edit | s: status | v: compact | ?: help"
+			if a.activeFilter == "My Unlabeled Issues" {
+				hints = "T: auto-tag | " + hints
+			}
+			a.statusBar.SetHints(hints)
 		} else {
 			a.statusBar.SetHints("tab: teams | ?: help")
 		}
@@ -813,6 +848,7 @@ func (a App) renderHelp() string {
 				{"s", "change status"},
 				{"r", "refresh list"},
 				{"h", "focus sidebar"},
+				{"T", "auto-tag (unlabeled only)"},
 			},
 		},
 		{
@@ -878,6 +914,9 @@ func (a App) createIssue(confirmed modal.IssueCreateConfirmedMsg) tea.Cmd {
 		if confirmed.ProjectID != nil {
 			input.ProjectID = confirmed.ProjectID
 		}
+		if confirmed.StateID != nil {
+			input.StateID = confirmed.StateID
+		}
 		if confirmed.CycleID != nil {
 			input.CycleID = confirmed.CycleID
 		}
@@ -912,5 +951,100 @@ func (a App) editIssue(confirmed IssueEditConfirmedMsg) tea.Cmd {
 			return ErrorMsg{Err: fmt.Errorf("edit issue: %w", err)}
 		}
 		return IssueUpdatedMsg{Issue: *issue}
+	}
+}
+
+var allowedLabels = []string{
+	"Bug",
+	"New Feature",
+	"Feature Improvement",
+	"Investigation",
+	"System Improvement",
+	"Housekeeping",
+	"Documentation",
+}
+
+// autoTagIssues returns a command that auto-tags issues using Gemini CLI.
+func (a App) autoTagIssues(issues []linear.Issue) tea.Cmd {
+	if len(issues) == 0 {
+		return nil
+	}
+
+	return func() tea.Msg {
+		if a.ctx.CurrentTeam == nil {
+			return ErrorMsg{Err: fmt.Errorf("no current team")}
+		}
+
+		meta, err := a.ctx.Client.GetTeamMetadata(a.ctx.CurrentTeam.ID)
+		if err != nil {
+			return ErrorMsg{Err: fmt.Errorf("fetch team metadata: %w", err)}
+		}
+
+		labelMap := make(map[string]string)
+		for _, l := range meta.Labels {
+			labelMap[l.Name] = l.ID
+		}
+
+		// Ensure all allowed labels exist or skip those that don't
+		existingAllowed := []string{}
+		for _, name := range allowedLabels {
+			if _, ok := labelMap[name]; ok {
+				existingAllowed = append(existingAllowed, name)
+			}
+		}
+
+		if len(existingAllowed) == 0 {
+			return ErrorMsg{Err: fmt.Errorf("none of the allowed labels exist in this team")}
+		}
+
+		// 2. Prepare prompt
+		var issuesText strings.Builder
+		for _, issue := range issues {
+			desc := issue.Description
+			if len(desc) > 300 {
+				desc = desc[:300]
+			}
+			fmt.Fprintf(&issuesText, "ID: %s\nTitle: %s\nDescription: %s\n---\n", issue.Identifier, issue.Title, desc)
+		}
+
+		prompt := fmt.Sprintf(
+			"Categorize the following Linear issues into EXACTLY ONE of these categories:\n%s\n\nIssues:\n%s\n\nRespond ONLY with a list of \"ID: Category\", one per line. Do not include any other text or markdown.",
+			strings.Join(existingAllowed, ", "),
+			issuesText.String(),
+		)
+
+		// 3. Run gemini CLI
+		cmd := exec.Command("gemini", "-p", prompt)
+		output, err := cmd.Output()
+		if err != nil {
+			return ErrorMsg{Err: fmt.Errorf("run gemini cli: %w", err)}
+		}
+
+		// 4. Parse output
+		suggestions := make(map[string]string)
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		for _, line := range lines {
+			if parts := strings.Split(line, ":"); len(parts) >= 2 {
+				id := strings.TrimSpace(parts[0])
+				category := strings.TrimSpace(parts[1])
+				for _, allowed := range existingAllowed {
+					if strings.Contains(strings.ToLower(category), strings.ToLower(allowed)) {
+						suggestions[id] = labelMap[allowed]
+						break
+					}
+				}
+			}
+		}
+
+		// 5. Update issues
+		for _, issue := range issues {
+			if labelID, ok := suggestions[issue.Identifier]; ok {
+				if err := a.ctx.Client.UpdateIssueLabels(issue.ID, []string{labelID}); err != nil {
+					// continue on error
+				}
+			}
+		}
+
+		return RefreshIssuesMsg{}
 	}
 }

@@ -161,6 +161,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "T":
+			// Extract all issues from the list.
+			var issues []linear.Issue
+			for _, item := range m.list.Items() {
+				if issueItem, ok := item.(IssueItem); ok {
+					issues = append(issues, issueItem.Issue)
+				}
+			}
+			return m, func() tea.Msg {
+				return appmsg.AutoTagIssuesMsg{Issues: issues}
+			}
+
 		case "r":
 			return m, func() tea.Msg {
 				return appmsg.RefreshIssuesMsg{}

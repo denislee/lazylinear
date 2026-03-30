@@ -102,6 +102,22 @@ const queryTeamMetadata = `query($teamId: String!) {
 				completedAt
 			}
 		}
+		states {
+			nodes {
+				id
+				name
+				color
+				type
+				position
+			}
+		}
+		labels {
+			nodes {
+				id
+				name
+				color
+			}
+		}
 	}
 }`
 

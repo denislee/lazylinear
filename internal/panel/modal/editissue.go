@@ -19,11 +19,13 @@ type EditIssueModel struct {
 	descInput      textarea.Model
 	priorityCursor int
 	assigneeCursor int
-	focusIndex     int // 0=title, 1=desc, 2=priority, 3=assignee, 4=submit
+	stateCursor    int
+	focusIndex     int // 0=title, 1=desc, 2=priority, 3=assignee, 4=state, 5=submit
 	issueID        string
 	err            string
 
 	assignees []linear.User
+	states    []linear.WorkflowState
 }
 
 // NewEditIssue creates a new issue edit form modal.
@@ -51,6 +53,7 @@ func NewEditIssue(issue linear.Issue, currentUser *linear.User, meta *linear.Tea
 
 	if meta != nil {
 		m.assignees = meta.Members
+		m.states = meta.States
 	}
 
 	// Set default assignee to current issue assignee
@@ -60,6 +63,14 @@ func NewEditIssue(issue linear.Issue, currentUser *linear.User, meta *linear.Tea
 				m.assigneeCursor = i + 1 // +1 because 0 is "Unassigned"
 				break
 			}
+		}
+	}
+
+	// Set default state to current issue state
+	for i, s := range m.states {
+		if s.ID == issue.State.ID {
+			m.stateCursor = i
+			break
 		}
 	}
 
@@ -80,17 +91,17 @@ func (m EditIssueModel) Update(msg tea.Msg) (EditIssueModel, tea.Cmd) {
 			}
 
 		case "tab":
-			m.focusIndex = (m.focusIndex + 1) % 5
+			m.focusIndex = (m.focusIndex + 1) % 6
 			m.updateFocus()
 			return m, nil
 
 		case "shift+tab":
-			m.focusIndex = (m.focusIndex - 1 + 5) % 5
+			m.focusIndex = (m.focusIndex - 1 + 6) % 6
 			m.updateFocus()
 			return m, nil
 
 		case "enter":
-			if m.focusIndex == 4 {
+			if m.focusIndex == 5 {
 				return m.submit()
 			}
 
@@ -117,6 +128,18 @@ func (m EditIssueModel) Update(msg tea.Msg) (EditIssueModel, tea.Cmd) {
 				case "k", "up", "ctrl+p":
 					if m.assigneeCursor > 0 {
 						m.assigneeCursor--
+					}
+				}
+				return m, nil
+			case 4: // State
+				switch key {
+				case "j", "down", "ctrl+n":
+					if len(m.states) > 0 && m.stateCursor < len(m.states)-1 {
+						m.stateCursor++
+					}
+				case "k", "up", "ctrl+p":
+					if m.stateCursor > 0 {
+						m.stateCursor--
 					}
 				}
 				return m, nil
@@ -173,6 +196,12 @@ func (m EditIssueModel) submit() (EditIssueModel, tea.Cmd) {
 		assigneeID = &id
 	}
 
+	var stateID *string
+	if len(m.states) > 0 && m.stateCursor >= 0 && m.stateCursor < len(m.states) {
+		id := m.states[m.stateCursor].ID
+		stateID = &id
+	}
+
 	return m, func() tea.Msg {
 		priority := m.priorityCursor
 		return appmsg.IssueEditConfirmedMsg{
@@ -181,6 +210,7 @@ func (m EditIssueModel) submit() (EditIssueModel, tea.Cmd) {
 			Description: &desc,
 			Priority:    &priority,
 			AssigneeID:  assigneeID,
+			StateID:     stateID,
 		}
 	}
 }
@@ -238,9 +268,22 @@ func (m EditIssueModel) View() string {
 	b.WriteString(renderDropdown(assigneeName, m.focusIndex == 3))
 	b.WriteString("\n\n")
 
+	// State
+	stateName := "Unknown"
+	if len(m.states) > 0 && m.stateCursor >= 0 && m.stateCursor < len(m.states) {
+		stateName = m.states[m.stateCursor].Name
+	}
+	stateLabel := labelStyle.Render("State:")
+	if m.focusIndex == 4 {
+		stateLabel = focusedLabel.Render("State:")
+	}
+	b.WriteString(stateLabel + " ")
+	b.WriteString(renderDropdown(stateName, m.focusIndex == 4))
+	b.WriteString("\n\n")
+
 	// Submit button
 	submitStyle := lipgloss.NewStyle().Padding(0, 2)
-	if m.focusIndex == 4 {
+	if m.focusIndex == 5 {
 		submitStyle = submitStyle.
 			Background(lipgloss.Color("#7D56F4")).
 			Foreground(lipgloss.Color("#FFFFFF")).

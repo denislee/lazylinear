@@ -170,11 +170,13 @@ func (c *Client) GetWorkflowStates(teamID string) ([]WorkflowState, error) {
 	return resp.Team.States.Nodes, nil
 }
 
-// TeamMetadata holds members, projects, and cycles for a team.
+// TeamMetadata holds members, projects, cycles, and workflow states for a team.
 type TeamMetadata struct {
 	Members  []User
 	Projects []Project
 	Cycles   []Cycle
+	States   []WorkflowState
+	Labels   []Label
 }
 
 // GetTeamMetadata returns members, projects, and cycles for a team.
@@ -190,6 +192,12 @@ func (c *Client) GetTeamMetadata(teamID string) (*TeamMetadata, error) {
 			Cycles struct {
 				Nodes []Cycle `json:"nodes"`
 			} `json:"cycles"`
+			States struct {
+				Nodes []WorkflowState `json:"nodes"`
+			} `json:"states"`
+			Labels struct {
+				Nodes []Label `json:"nodes"`
+			} `json:"labels"`
 		} `json:"team"`
 	}
 	if err := c.execute(queryTeamMetadata, vars, &resp); err != nil {
@@ -205,6 +213,8 @@ func (c *Client) GetTeamMetadata(teamID string) (*TeamMetadata, error) {
 		Members:  resp.Team.Members.Nodes,
 		Projects: projects,
 		Cycles:   resp.Team.Cycles.Nodes,
+		States:   resp.Team.States.Nodes,
+		Labels:   resp.Team.Labels.Nodes,
 	}, nil
 }
 
@@ -339,4 +349,26 @@ func (c *Client) GetFilterCounts(teamID string, filters map[string]map[string]an
 	}
 
 	return counts, nil
+}
+
+// UpdateIssueLabels updates the labels of an issue.
+func (c *Client) UpdateIssueLabels(issueID string, labelIDs []string) error {
+	vars := map[string]any{
+		"id": issueID,
+		"input": map[string]any{
+			"labelIds": labelIDs,
+		},
+	}
+	var resp struct {
+		IssueUpdate struct {
+			Success bool `json:"success"`
+		} `json:"issueUpdate"`
+	}
+	if err := c.execute(mutationUpdateIssue, vars, &resp); err != nil {
+		return err
+	}
+	if !resp.IssueUpdate.Success {
+		return fmt.Errorf("issue update failed")
+	}
+	return nil
 }
