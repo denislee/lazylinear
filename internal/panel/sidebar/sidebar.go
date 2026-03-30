@@ -28,6 +28,7 @@ type Model struct {
 	filterCursor   int
 	selectedFilter int
 	filters        []string
+	filterCounts   map[string]int
 
 	focused        bool
 	width          int
@@ -57,8 +58,19 @@ func New() Model {
 	}
 }
 
+// isSeparator returns true if the filter entry is a visual separator.
+func isSeparator(f string) bool {
+	return f == "---"
+}
+
+// SetFilterCounts updates the issue counts displayed next to each filter.
+func (m *Model) SetFilterCounts(counts map[string]int) {
+	m.filterCounts = counts
+}
+
 // SetFilters updates the available filters in the sidebar.
 func (m *Model) SetFilters(filters []string) {
+	m.filterCounts = nil // reset counts when filters change
 	m.filters = filters
 	// Adjust cursors if needed
 	if m.filterCursor >= len(m.filters) {
@@ -67,6 +79,8 @@ func (m *Model) SetFilters(filters []string) {
 			m.filterCursor = 0
 		}
 	}
+	// Skip separator if cursor landed on one
+	m.filterCursor = m.nextSelectableFilter(m.filterCursor, 1)
 	if m.selectedFilter >= len(m.filters) {
 		m.selectedFilter = 0
 	}
@@ -138,6 +152,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tea.Batch(cmds...)
+
+	case appmsg.FilterCountsMsg:
+		m.filterCounts = msg.Counts
+		return m, nil
 
 	case appmsg.ErrorMsg:
 		// If we were loading teams and got an error, mark load as failed.
@@ -216,6 +234,16 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// nextSelectableFilter finds the next non-separator filter index in the given direction.
+func (m *Model) nextSelectableFilter(from, direction int) int {
+	for i := from; i >= 0 && i < len(m.filters); i += direction {
+		if !isSeparator(m.filters[i]) {
+			return i
+		}
+	}
+	return from
+}
+
 func (m *Model) moveCursor(delta int) {
 	if m.section == SectionTeams {
 		m.cursor += delta
@@ -229,23 +257,27 @@ func (m *Model) moveCursor(delta int) {
 				if m.filterCursor >= len(m.filters) {
 					m.filterCursor = len(m.filters) - 1
 				}
+				m.filterCursor = m.nextSelectableFilter(m.filterCursor, 1)
 				m.cursor = len(m.teams) - 1
 			} else {
 				m.cursor = len(m.teams) - 1
 			}
 		}
 	} else {
-		m.filterCursor += delta
-		if m.filterCursor < 0 {
+		next := m.filterCursor + delta
+		if next < 0 {
 			// Move back to teams section.
 			if len(m.teams) > 0 {
 				m.section = SectionTeams
 				m.cursor = len(m.teams) - 1
 			} else {
-				m.filterCursor = 0
+				m.filterCursor = m.nextSelectableFilter(0, 1)
 			}
-		} else if m.filterCursor >= len(m.filters) {
-			m.filterCursor = len(m.filters) - 1
+		} else if next >= len(m.filters) {
+			m.filterCursor = m.nextSelectableFilter(len(m.filters)-1, -1)
+		} else {
+			// Skip separators in the direction of movement.
+			m.filterCursor = m.nextSelectableFilter(next, delta)
 		}
 	}
 }
@@ -257,7 +289,7 @@ func (m Model) selectItem() (tea.Model, tea.Cmd) {
 			return appmsg.TeamSelectedMsg{Team: m.teams[m.cursor]}
 		}
 	}
-	if m.section == SectionFilters && m.filterCursor < len(m.filters) {
+	if m.section == SectionFilters && m.filterCursor < len(m.filters) && !isSeparator(m.filters[m.filterCursor]) {
 		m.selectedFilter = m.filterCursor
 		filter := m.filters[m.filterCursor]
 		return m, func() tea.Msg {
@@ -327,6 +359,12 @@ func (m Model) View() tea.View {
 	b.WriteString(filterTitle + "\n")
 
 	for i, f := range m.filters {
+		if isSeparator(f) {
+			sep := strings.Repeat("─", innerWidth)
+			b.WriteString(theme.SubtitleStyle.Render(sep) + "\n")
+			continue
+		}
+
 		cursor := "  "
 		style := lipgloss.NewStyle()
 
@@ -337,7 +375,17 @@ func (m Model) View() tea.View {
 			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
 		}
 
-		label := truncate(f, innerWidth-2)
+		filterLabel := f
+		if m.filterCounts != nil {
+			if count, ok := m.filterCounts[f]; ok {
+				countStr := fmt.Sprintf(" (%d)", count)
+				if count >= 250 {
+					countStr = " (250+)"
+				}
+				filterLabel = f + countStr
+			}
+		}
+		label := truncate(filterLabel, innerWidth-2)
 		b.WriteString(cursor + style.Render(label) + "\n")
 	}
 

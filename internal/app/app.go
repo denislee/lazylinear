@@ -163,6 +163,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cycleFocus(-1)
 			a.updateStatusBarHints()
 			return a, nil
+		case "c":
+			// Open create issue globally, even if sidebar is focused
+			if !a.mainPanel.IsFiltering() {
+				return a, func() tea.Msg {
+					return OpenCreateIssueMsg{}
+				}
+			}
+			return a.routeKeyToFocused(msg)
 		case "v":
 			// Toggle compact mode globally, even if sidebar is focused
 			if !a.mainPanel.IsFiltering() {
@@ -236,6 +244,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, tea.Batch(cmds...)
 
+	case FilterCountsMsg:
+		a.sidebar.SetFilterCounts(msg.Counts)
+		return a, nil
+
 	case IssuesLoadedMsg:
 		// Forward to main panel.
 		updatedMain, cmd := a.mainPanel.Update(msg)
@@ -290,8 +302,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case OpenCreateIssueMsg:
-		// Fetch team metadata first, then open the create issue modal.
+		// Open modal immediately, then lazy-load lists.
 		if a.ctx.CurrentTeam != nil {
+			a.modal.OpenCreateIssue(a.ctx.CurrentTeam.ID, a.ctx.CurrentUser)
 			a.pendingCreateIssue = true
 			cmds = append(cmds, a.fetchTeamMetadata(a.ctx.CurrentTeam.ID))
 		}
@@ -311,36 +324,47 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.modal.OpenEditIssue(*a.pendingEditIssue, a.ctx.CurrentUser, msg.Metadata)
 				a.pendingEditIssue = nil
 			} else if a.pendingCreateIssue {
-				a.modal.OpenCreateIssue(a.ctx.CurrentTeam.ID, a.ctx.CurrentUser, msg.Metadata)
+				a.modal.SetCreateIssueMetadata(msg.Metadata)
 				a.pendingCreateIssue = false
 			}
 
 			if msg.Metadata != nil {
 				a.ctx.CurrentProjects = msg.Metadata.Projects
-				
+
 				filters := []string{
 					"My Issues",
 					"My Issues + Active",
 					"My Issues + Backlog",
-					"All Issues",
-					"Active",
-					"Backlog",
 				}
-				
+
 				if a.ctx.CurrentUser != nil {
+					var projectFilters []string
 					for _, p := range msg.Metadata.Projects {
-						if p.Lead != nil && p.Lead.ID == a.ctx.CurrentUser.ID {
+						status := strings.ToLower(p.Status.Name)
+						if status == "developing" && p.Lead != nil && p.Lead.ID == a.ctx.CurrentUser.ID {
 							projectName := formatProjectNameForFilter(p.Name)
-							filters = append(filters, projectName)
-							filters = append(filters, projectName+" + Active")
-							filters = append(filters, projectName+" + Backlog")
+							projectFilters = append(projectFilters, projectName)
+							projectFilters = append(projectFilters, projectName+" + Active")
+							projectFilters = append(projectFilters, projectName+" + Backlog")
 						}
 					}
+					if len(projectFilters) > 0 {
+						filters = append(filters, "---")
+						filters = append(filters, projectFilters...)
+					}
 				}
+
+				filters = append(filters, "---")
+				filters = append(filters, "All Issues", "Active", "Backlog")
 				
 				a.sidebar.SetFilters(filters)
+
+				// Fetch issue counts for all non-separator filters.
+				if a.ctx.CurrentTeam != nil {
+					cmds = append(cmds, a.fetchFilterCounts(a.ctx.CurrentTeam.ID, filters))
+				}
 			}
-			
+
 			// Forward TeamMetadataLoadedMsg to sidebar to update filters
 			updatedSidebar, cmd := a.sidebar.Update(msg)
 			a.sidebar = updatedSidebar.(sidebar.Model)
@@ -536,6 +560,25 @@ func (a App) fetchIssues(teamID string, filterName string) tea.Cmd {
 	}
 }
 
+// fetchFilterCounts returns a command that fetches issue counts for all non-separator filters.
+func (a App) fetchFilterCounts(teamID string, filterNames []string) tea.Cmd {
+	filterMap := make(map[string]map[string]any)
+	for _, name := range filterNames {
+		if name == "---" {
+			continue
+		}
+		f := buildIssueFilter(name, a.ctx.CurrentUser, a.ctx.CurrentProjects)
+		filterMap[name] = f
+	}
+	return func() tea.Msg {
+		counts, err := a.ctx.Client.GetFilterCounts(teamID, filterMap)
+		if err != nil {
+			return ErrorMsg{Err: fmt.Errorf("fetch filter counts: %w", err)}
+		}
+		return FilterCountsMsg{Counts: counts}
+	}
+}
+
 // buildIssueFilter converts a sidebar filter name to a Linear GraphQL IssueFilter.
 func buildIssueFilter(filterName string, currentUser *linear.User, projects []linear.Project) map[string]any {
 	switch filterName {
@@ -711,7 +754,7 @@ func (a *App) updateStatusBarHints() {
 	}
 	switch a.focus {
 	case PanelSidebar:
-		a.statusBar.SetHints("j/k: navigate | enter: select | l: select & focus | tab: issues | ?: help")
+		a.statusBar.SetHints("j/k: navigate | enter: select | l: select & focus | c: create | v: compact | tab: issues | ?: help")
 	case PanelMain:
 		if a.mainPanel.Focused() {
 			a.statusBar.SetHints("j/k: navigate | /: filter | enter: open | c: create | e: edit | s: status | v: compact | ?: help")
@@ -747,6 +790,8 @@ func (a App) renderHelp() string {
 				{"ctrl+c", "quit"},
 				{"q", "quit"},
 				{"tab / shift+tab", "switch panel"},
+				{"c", "create new issue"},
+				{"v", "toggle compact view"},
 				{"?", "toggle help"},
 			},
 		},
@@ -764,7 +809,6 @@ func (a App) renderHelp() string {
 				{"j / k", "navigate up/down"},
 				{"/", "filter issues"},
 				{"enter / l", "open issue detail"},
-				{"c", "create new issue"},
 				{"e", "edit issue"},
 				{"s", "change status"},
 				{"r", "refresh list"},

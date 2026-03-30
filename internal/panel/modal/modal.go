@@ -59,9 +59,15 @@ func (m *Model) OpenStatusChange(issue linear.Issue, states []linear.WorkflowSta
 }
 
 // OpenCreateIssue opens the create issue modal for the given team.
-func (m *Model) OpenCreateIssue(teamID string, currentUser *linear.User, meta *linear.TeamMetadata) {
-	m.createIssue = NewCreateIssue(teamID, currentUser, meta)
+// Lists are initially empty; call SetCreateIssueMetadata to populate them.
+func (m *Model) OpenCreateIssue(teamID string, currentUser *linear.User) {
+	m.createIssue = NewCreateIssue(teamID, currentUser)
 	m.modalType = CreateIssue
+}
+
+// SetCreateIssueMetadata populates the assignee/project/cycle lists on the active create issue modal.
+func (m *Model) SetCreateIssueMetadata(meta *linear.TeamMetadata) {
+	m.createIssue.SetMetadata(meta)
 }
 
 // OpenEditIssue opens the edit issue modal for the given issue.

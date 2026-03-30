@@ -92,6 +92,11 @@ type FocusSidebarMsg struct{}
 // FocusMainPanelMsg is sent when the sidebar wants to move focus to the main panel.
 type FocusMainPanelMsg struct{}
 
+// FilterCountsMsg is sent when issue counts per filter have been fetched.
+type FilterCountsMsg struct {
+	Counts map[string]int
+}
+
 // ErrorMsg is sent when an error occurs.
 type ErrorMsg struct {
 	Err error

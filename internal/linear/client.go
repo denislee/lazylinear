@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 const apiURL = "https://api.linear.app/graphql"
@@ -186,9 +187,6 @@ func (c *Client) GetTeamMetadata(teamID string) (*TeamMetadata, error) {
 			Members struct {
 				Nodes []User `json:"nodes"`
 			} `json:"members"`
-			Projects struct {
-				Nodes []Project `json:"nodes"`
-			} `json:"projects"`
 			Cycles struct {
 				Nodes []Cycle `json:"nodes"`
 			} `json:"cycles"`
@@ -197,11 +195,52 @@ func (c *Client) GetTeamMetadata(teamID string) (*TeamMetadata, error) {
 	if err := c.execute(queryTeamMetadata, vars, &resp); err != nil {
 		return nil, err
 	}
+
+	projects, err := c.getAllProjects()
+	if err != nil {
+		return nil, err
+	}
+
 	return &TeamMetadata{
 		Members:  resp.Team.Members.Nodes,
-		Projects: resp.Team.Projects.Nodes,
+		Projects: projects,
 		Cycles:   resp.Team.Cycles.Nodes,
 	}, nil
+}
+
+// getAllProjects fetches all projects across all pages.
+func (c *Client) getAllProjects() ([]Project, error) {
+	var all []Project
+	var cursor *string
+
+	for {
+		vars := map[string]any{}
+		if cursor != nil {
+			vars["after"] = *cursor
+		}
+
+		var resp struct {
+			Projects struct {
+				Nodes    []Project `json:"nodes"`
+				PageInfo struct {
+					HasNextPage bool   `json:"hasNextPage"`
+					EndCursor   string `json:"endCursor"`
+				} `json:"pageInfo"`
+			} `json:"projects"`
+		}
+		if err := c.execute(queryProjects, vars, &resp); err != nil {
+			return nil, err
+		}
+
+		all = append(all, resp.Projects.Nodes...)
+
+		if !resp.Projects.PageInfo.HasNextPage {
+			break
+		}
+		cursor = &resp.Projects.PageInfo.EndCursor
+	}
+
+	return all, nil
 }
 
 // CreateIssue creates a new issue and returns it.
@@ -243,4 +282,61 @@ func (c *Client) UpdateIssue(id string, input IssueUpdateInput) (*Issue, error) 
 		return nil, fmt.Errorf("issue update failed")
 	}
 	return &resp.IssueUpdate.Issue, nil
+}
+
+// GetFilterCounts returns issue counts for multiple filters in a single API call
+// using GraphQL aliases. Each filter is identified by its name.
+func (c *Client) GetFilterCounts(teamID string, filters map[string]map[string]any) (map[string]int, error) {
+	if len(filters) == 0 {
+		return nil, nil
+	}
+
+	// Build a dynamic query with one alias per filter.
+	var varDefs []string
+	var aliases []string
+	vars := map[string]any{"teamId": teamID}
+
+	varDefs = append(varDefs, "$teamId: String!")
+
+	i := 0
+	aliasToName := make(map[string]string)
+	for name, filter := range filters {
+		alias := fmt.Sprintf("f%d", i)
+		aliasToName[alias] = name
+		varName := fmt.Sprintf("$filter%d", i)
+		varDefs = append(varDefs, fmt.Sprintf("%s: IssueFilter", varName))
+		aliases = append(aliases, fmt.Sprintf("%s: issues(first: 250, filter: %s) { nodes { id } }", alias, varName))
+		vars[fmt.Sprintf("filter%d", i)] = filter
+		i++
+	}
+
+	query := fmt.Sprintf("query(%s) { team(id: $teamId) { %s } }",
+		strings.Join(varDefs, ", "),
+		strings.Join(aliases, "\n"))
+
+	var resp struct {
+		Team map[string]json.RawMessage `json:"team"`
+	}
+	if err := c.execute(query, vars, &resp); err != nil {
+		return nil, err
+	}
+
+	counts := make(map[string]int)
+	for alias, name := range aliasToName {
+		raw, ok := resp.Team[alias]
+		if !ok {
+			continue
+		}
+		var conn struct {
+			Nodes []struct {
+				ID string `json:"id"`
+			} `json:"nodes"`
+		}
+		if err := json.Unmarshal(raw, &conn); err != nil {
+			continue
+		}
+		counts[name] = len(conn.Nodes)
+	}
+
+	return counts, nil
 }

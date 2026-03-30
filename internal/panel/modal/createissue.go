@@ -41,13 +41,16 @@ type CreateIssueModel struct {
 	teamID         string
 	err            string
 
-	assignees []linear.User
-	projects  []linear.Project
-	cycles    []linear.Cycle
+	assignees    []linear.User
+	projects     []linear.Project
+	cycles       []linear.Cycle
+	listsLoading bool
+	currentUser  *linear.User
 }
 
 // NewCreateIssue creates a new issue creation form modal.
-func NewCreateIssue(teamID string, currentUser *linear.User, meta *linear.TeamMetadata) CreateIssueModel {
+// The modal opens immediately with empty lists; call SetMetadata once data arrives.
+func NewCreateIssue(teamID string, currentUser *linear.User) CreateIssueModel {
 	ti := textinput.New()
 	ti.Placeholder = "Issue title"
 	ti.CharLimit = 200
@@ -60,30 +63,39 @@ func NewCreateIssue(teamID string, currentUser *linear.User, meta *linear.TeamMe
 	ta.SetHeight(4)
 	ta.Blur()
 
-	m := CreateIssueModel{
-		titleInput: ti,
-		descInput:  ta,
-		teamID:     teamID,
+	return CreateIssueModel{
+		titleInput:   ti,
+		descInput:    ta,
+		teamID:       teamID,
+		currentUser:  currentUser,
+		listsLoading: true,
+	}
+}
+
+// SetMetadata populates the assignee, project and cycle lists once data is available.
+func (m *CreateIssueModel) SetMetadata(meta *linear.TeamMetadata) {
+	m.listsLoading = false
+	if meta == nil {
+		return
 	}
 
-	if meta != nil {
-		m.assignees = meta.Members
-		
-		var myProjects []linear.Project
-		for _, p := range meta.Projects {
-			if currentUser != nil && p.Lead != nil && p.Lead.ID == currentUser.ID {
-				myProjects = append(myProjects, p)
-			}
+	m.assignees = meta.Members
+
+	var myProjects []linear.Project
+	for _, p := range meta.Projects {
+		status := strings.ToLower(p.Status.Name)
+		if status == "developing" && m.currentUser != nil && p.Lead != nil && p.Lead.ID == m.currentUser.ID {
+			myProjects = append(myProjects, p)
 		}
-		m.projects = myProjects
-		
-		m.cycles = meta.Cycles
 	}
+	m.projects = myProjects
+
+	m.cycles = meta.Cycles
 
 	// Set default assignee to current user
-	if currentUser != nil {
+	if m.currentUser != nil {
 		for i, a := range m.assignees {
-			if a.ID == currentUser.ID {
+			if a.ID == m.currentUser.ID {
 				m.assigneeCursor = i + 1 // +1 because 0 is "Unassigned"
 				break
 			}
@@ -98,8 +110,6 @@ func NewCreateIssue(teamID string, currentUser *linear.User, meta *linear.TeamMe
 			break
 		}
 	}
-
-	return m
 }
 
 func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
@@ -126,7 +136,7 @@ func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
 			return m, nil
 
 		case "enter":
-			if m.focusIndex == 6 {
+			if m.focusIndex == 6 && !m.listsLoading {
 				return m.submit()
 			}
 
@@ -145,6 +155,9 @@ func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
 				}
 				return m, nil
 			case 3: // Assignee
+				if m.listsLoading {
+					return m, nil
+				}
 				switch key {
 				case "j", "down", "ctrl+n":
 					if m.assigneeCursor < len(m.assignees) {
@@ -157,6 +170,9 @@ func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
 				}
 				return m, nil
 			case 4: // Project
+				if m.listsLoading {
+					return m, nil
+				}
 				switch key {
 				case "j", "down", "ctrl+n":
 					if m.projectCursor < len(m.projects) {
@@ -169,6 +185,9 @@ func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
 				}
 				return m, nil
 			case 5: // Cycle
+				if m.listsLoading {
+					return m, nil
+				}
 				switch key {
 				case "j", "down", "ctrl+n":
 					if m.cycleCursor < len(m.cycles) {
@@ -298,47 +317,61 @@ func (m CreateIssueModel) View() string {
 	b.WriteString(renderDropdown(priorities[m.priorityCursor], m.focusIndex == 2))
 	b.WriteString("\n\n")
 
+	loadingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666")).Italic(true)
+
 	// Assignee
-	assigneeName := "Unassigned"
-	if m.assigneeCursor > 0 {
-		assigneeName = m.assignees[m.assigneeCursor-1].Name
-	}
 	assLabel := labelStyle.Render("Assignee:")
 	if m.focusIndex == 3 {
 		assLabel = focusedLabel.Render("Assignee:")
 	}
 	b.WriteString(assLabel + " ")
-	b.WriteString(renderDropdown(assigneeName, m.focusIndex == 3))
+	if m.listsLoading {
+		b.WriteString(loadingStyle.Render("Loading..."))
+	} else {
+		assigneeName := "Unassigned"
+		if m.assigneeCursor > 0 {
+			assigneeName = m.assignees[m.assigneeCursor-1].Name
+		}
+		b.WriteString(renderDropdown(assigneeName, m.focusIndex == 3))
+	}
 	b.WriteString("\n\n")
 
 	// Project
-	projectName := "No Project"
-	if m.projectCursor > 0 {
-		projectName = m.projects[m.projectCursor-1].Name
-	}
 	projLabel := labelStyle.Render("Project: ")
 	if m.focusIndex == 4 {
 		projLabel = focusedLabel.Render("Project: ")
 	}
 	b.WriteString(projLabel + " ")
-	b.WriteString(renderDropdown(projectName, m.focusIndex == 4))
+	if m.listsLoading {
+		b.WriteString(loadingStyle.Render("Loading..."))
+	} else {
+		projectName := "No Project"
+		if m.projectCursor > 0 {
+			projectName = m.projects[m.projectCursor-1].Name
+		}
+		b.WriteString(renderDropdown(projectName, m.focusIndex == 4))
+	}
 	b.WriteString("\n\n")
 
 	// Cycle
-	cycleName := "No Cycle"
-	if m.cycleCursor > 0 {
-		c := m.cycles[m.cycleCursor-1]
-		cycleName = fmt.Sprintf("Cycle %d", c.Number)
-		if c.Name != "" {
-			cycleName = c.Name
-		}
-	}
 	cycLabel := labelStyle.Render("Cycle:   ")
 	if m.focusIndex == 5 {
 		cycLabel = focusedLabel.Render("Cycle:   ")
 	}
 	b.WriteString(cycLabel + " ")
-	b.WriteString(renderDropdown(cycleName, m.focusIndex == 5))
+	if m.listsLoading {
+		b.WriteString(loadingStyle.Render("Loading..."))
+	} else {
+		cycleName := "No Cycle"
+		if m.cycleCursor > 0 {
+			c := m.cycles[m.cycleCursor-1]
+			cycleName = fmt.Sprintf("Cycle %d", c.Number)
+			if c.Name != "" {
+				cycleName = c.Name
+			}
+		}
+		b.WriteString(renderDropdown(cycleName, m.focusIndex == 5))
+	}
 	b.WriteString("\n\n")
 
 	// Submit button

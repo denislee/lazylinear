@@ -85,23 +85,14 @@ const queryWorkflowStates = `query($teamId: String!) {
 
 const queryTeamMetadata = `query($teamId: String!) {
 	team(id: $teamId) {
-		members {
+		members(first: 100) {
 			nodes {
 				id
 				name
 				email
 			}
 		}
-		projects {
-			nodes {
-				id
-				name
-				lead {
-					id
-				}
-			}
-		}
-		cycles {
+		cycles(first: 100) {
 			nodes {
 				id
 				number
@@ -110,6 +101,25 @@ const queryTeamMetadata = `query($teamId: String!) {
 				endsAt
 				completedAt
 			}
+		}
+	}
+}`
+
+const queryProjects = `query($after: String) {
+	projects(first: 250, after: $after, includeArchived: true) {
+		nodes {
+			id
+			name
+			status {
+				name
+			}
+			lead {
+				id
+			}
+		}
+		pageInfo {
+			hasNextPage
+			endCursor
 		}
 	}
 }`

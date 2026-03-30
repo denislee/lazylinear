@@ -9,11 +9,17 @@ type User struct {
 	Email string `json:"email"`
 }
 
+// ProjectStatus represents a Linear project status.
+type ProjectStatus struct {
+	Name string `json:"name"`
+}
+
 // Project represents a Linear project.
 type Project struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Lead *User  `json:"lead"`
+	ID     string        `json:"id"`
+	Name   string        `json:"name"`
+	Status ProjectStatus `json:"status"`
+	Lead   *User         `json:"lead"`
 }
 
 // Cycle represents a Linear cycle.

@@ -22,6 +22,7 @@ type (
 	IssueCreatedMsg         = msg.IssueCreatedMsg
 	IssueUpdatedMsg         = msg.IssueUpdatedMsg
 	FilterSelectedMsg       = msg.FilterSelectedMsg
+	FilterCountsMsg         = msg.FilterCountsMsg
 	RefreshIssuesMsg        = msg.RefreshIssuesMsg
 	FocusSidebarMsg         = msg.FocusSidebarMsg
 	FocusMainPanelMsg       = msg.FocusMainPanelMsg

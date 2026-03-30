@@ -153,11 +153,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "c":
-			return m, func() tea.Msg {
-				return appmsg.OpenCreateIssueMsg{}
-			}
-
 		case "s":
 			if item, ok := m.list.SelectedItem().(IssueItem); ok {
 				return m, func() tea.Msg {
@@ -170,10 +165,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, func() tea.Msg {
 				return appmsg.RefreshIssuesMsg{}
 			}
-
-		case "v":
-			m.ToggleCompact()
-			return m, nil
 
 		case "h":
 			return m, func() tea.Msg {
