@@ -211,8 +211,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "l":
 		var cmds []tea.Cmd
-		m, cmd1 := m.selectItem()
-		cmds = append(cmds, cmd1)
+		if (m.section == SectionTeams && m.cursor != m.selectedTeam) ||
+			(m.section == SectionFilters && m.filterCursor != m.selectedFilter) {
+			newM, cmd1 := m.selectItem()
+			m = newM.(Model)
+			if cmd1 != nil {
+				cmds = append(cmds, cmd1)
+			}
+		}
 		cmds = append(cmds, func() tea.Msg { return appmsg.FocusMainPanelMsg{} })
 		return m, tea.Batch(cmds...)
 
