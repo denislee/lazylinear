@@ -13,14 +13,6 @@ import (
 	"github.com/denislee/lazylinear/internal/theme"
 )
 
-// Filter categories shown below the team list.
-var filterCategories = []string{
-	"My Issues",
-	"All Issues",
-	"Active",
-	"Backlog",
-}
-
 // SectionTeams is the teams section of the sidebar.
 const (
 	SectionTeams   = 0
@@ -34,27 +26,56 @@ type Model struct {
 	cursor         int
 	section        int // 0 = teams, 1 = filters
 	filterCursor   int
-	selectedFilter int // currently active filter index
+	selectedFilter int
+	filters        []string
+
+	focused        bool
 	width          int
 	height         int
-	focused        bool
 	loading        bool
 	loadFailed     bool
 	spinner        spinner.Model
+	initialTeamID  string
+	initialFilter  string
 }
 
 // New creates a new sidebar model.
 func New() Model {
-	s := spinner.New(
-		spinner.WithSpinner(spinner.MiniDot),
-		spinner.WithStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))),
-	)
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
 	return Model{
-		section:      SectionTeams,
-		filterCursor: 0,
-		loading:      true,
-		spinner:      s,
+		spinner: s,
+		filters: []string{
+			"My Issues",
+			"My Issues + Active",
+			"My Issues + Backlog",
+			"All Issues",
+			"Active",
+			"Backlog",
+		},
 	}
+}
+
+// SetFilters updates the available filters in the sidebar.
+func (m *Model) SetFilters(filters []string) {
+	m.filters = filters
+	// Adjust cursors if needed
+	if m.filterCursor >= len(m.filters) {
+		m.filterCursor = len(m.filters) - 1
+		if m.filterCursor < 0 {
+			m.filterCursor = 0
+		}
+	}
+	if m.selectedFilter >= len(m.filters) {
+		m.selectedFilter = 0
+	}
+}
+
+// SetInitialState sets the initial selected team and filter.
+func (m *Model) SetInitialState(teamID, filter string) {
+	m.initialTeamID = teamID
+	m.initialFilter = filter
 }
 
 // SetSize updates the sidebar dimensions.
@@ -88,6 +109,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.loadFailed = false
 
+		var cmds []tea.Cmd
+		if len(m.teams) > 0 {
+			if m.initialTeamID != "" {
+				for i, t := range m.teams {
+					if t.ID == m.initialTeamID {
+						m.cursor = i
+						m.selectedTeam = i
+						break
+					}
+				}
+			}
+			cmds = append(cmds, func() tea.Msg {
+				return appmsg.TeamSelectedMsg{Team: m.teams[m.selectedTeam]}
+			})
+
+			if m.initialFilter != "" {
+				for i, f := range m.filters {
+					if f == m.initialFilter {
+						m.filterCursor = i
+						m.selectedFilter = i
+						cmds = append(cmds, func() tea.Msg {
+							return appmsg.FilterSelectedMsg{Filter: f}
+						})
+						break
+					}
+				}
+			}
+		}
+		return m, tea.Batch(cmds...)
+
 	case appmsg.ErrorMsg:
 		// If we were loading teams and got an error, mark load as failed.
 		if m.loading {
@@ -119,10 +170,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "j", "down":
+	case "j", "down", "ctrl+n":
 		m.moveCursor(1)
 
-	case "k", "up":
+	case "k", "up", "ctrl+p":
 		m.moveCursor(-1)
 
 	case "g":
@@ -133,16 +184,33 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "G":
 		// Go to bottom.
-		if len(filterCategories) > 0 {
+		if len(m.filters) > 0 {
 			m.section = SectionFilters
-			m.filterCursor = len(filterCategories) - 1
+			m.filterCursor = len(m.filters) - 1
 		} else if len(m.teams) > 0 {
 			m.section = SectionTeams
 			m.cursor = len(m.teams) - 1
 		}
 
-	case "enter", "l":
+	case "l":
+		var cmds []tea.Cmd
+		m, cmd1 := m.selectItem()
+		cmds = append(cmds, cmd1)
+		cmds = append(cmds, func() tea.Msg { return appmsg.FocusMainPanelMsg{} })
+		return m, tea.Batch(cmds...)
+
+	case "enter":
 		return m.selectItem()
+	}
+
+	// Auto-select filter if we navigated to it
+	if m.section == SectionFilters {
+		switch msg.String() {
+		case "j", "down", "ctrl+n", "k", "up", "ctrl+p", "g", "G":
+			if m.filterCursor != m.selectedFilter {
+				return m.selectItem()
+			}
+		}
 	}
 
 	return m, nil
@@ -155,11 +223,11 @@ func (m *Model) moveCursor(delta int) {
 			m.cursor = 0
 		} else if m.cursor >= len(m.teams) {
 			// Move to filters section.
-			if len(filterCategories) > 0 {
+			if len(m.filters) > 0 {
 				m.section = SectionFilters
 				m.filterCursor = m.cursor - len(m.teams)
-				if m.filterCursor >= len(filterCategories) {
-					m.filterCursor = len(filterCategories) - 1
+				if m.filterCursor >= len(m.filters) {
+					m.filterCursor = len(m.filters) - 1
 				}
 				m.cursor = len(m.teams) - 1
 			} else {
@@ -176,8 +244,8 @@ func (m *Model) moveCursor(delta int) {
 			} else {
 				m.filterCursor = 0
 			}
-		} else if m.filterCursor >= len(filterCategories) {
-			m.filterCursor = len(filterCategories) - 1
+		} else if m.filterCursor >= len(m.filters) {
+			m.filterCursor = len(m.filters) - 1
 		}
 	}
 }
@@ -189,9 +257,9 @@ func (m Model) selectItem() (tea.Model, tea.Cmd) {
 			return appmsg.TeamSelectedMsg{Team: m.teams[m.cursor]}
 		}
 	}
-	if m.section == SectionFilters && m.filterCursor < len(filterCategories) {
+	if m.section == SectionFilters && m.filterCursor < len(m.filters) {
 		m.selectedFilter = m.filterCursor
-		filter := filterCategories[m.filterCursor]
+		filter := m.filters[m.filterCursor]
 		return m, func() tea.Msg {
 			return appmsg.FilterSelectedMsg{Filter: filter}
 		}
@@ -200,7 +268,7 @@ func (m Model) selectItem() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) totalItems() int {
-	return len(m.teams) + len(filterCategories)
+	return len(m.teams) + len(m.filters)
 }
 
 // View implements tea.Model.
@@ -258,7 +326,7 @@ func (m Model) View() tea.View {
 	filterTitle := theme.TitleStyle.Render("Filters")
 	b.WriteString(filterTitle + "\n")
 
-	for i, f := range filterCategories {
+	for i, f := range m.filters {
 		cursor := "  "
 		style := lipgloss.NewStyle()
 
@@ -269,7 +337,8 @@ func (m Model) View() tea.View {
 			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
 		}
 
-		b.WriteString(cursor + style.Render(f) + "\n")
+		label := truncate(f, innerWidth-2)
+		b.WriteString(cursor + style.Render(label) + "\n")
 	}
 
 	content := b.String()
@@ -290,8 +359,8 @@ func (m Model) View() tea.View {
 	}
 
 	rendered := borderStyle.
-		Width(innerWidth).
-		Height(innerHeight).
+		Width(m.width).
+		Height(m.height).
 		Render(content)
 
 	return tea.NewView(rendered)

@@ -74,7 +74,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
-		case "esc", "h", "q":
+		case "esc", "ctrl+[", "h", "q":
 			return m, func() tea.Msg {
 				return appmsg.BackToListMsg{}
 			}
@@ -86,6 +86,31 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					return appmsg.OpenStatusChangeMsg{Issue: issue}
 				}
 			}
+			return m, nil
+
+		case "e":
+			if m.issue != nil {
+				issue := *m.issue
+				return m, func() tea.Msg {
+					return appmsg.OpenEditIssueMsg{Issue: issue}
+				}
+			}
+			return m, nil
+
+		case "ctrl+n":
+			m.viewport.ScrollDown(1)
+			return m, nil
+
+		case "ctrl+p":
+			m.viewport.ScrollUp(1)
+			return m, nil
+
+		case "ctrl+f":
+			m.viewport.HalfPageDown()
+			return m, nil
+
+		case "ctrl+b":
+			m.viewport.HalfPageUp()
 			return m, nil
 		}
 	}

@@ -19,6 +19,8 @@ const (
 	StatusChange
 	// CreateIssue is the issue creation form modal.
 	CreateIssue
+	// EditIssue is the issue edit form modal.
+	EditIssue
 )
 
 // Model is the modal manager. It holds the active modal state and routes
@@ -27,6 +29,7 @@ type Model struct {
 	modalType    ModalType
 	statusChange StatusChangeModel
 	createIssue  CreateIssueModel
+	editIssue    EditIssueModel
 	width        int
 	height       int
 }
@@ -56,9 +59,15 @@ func (m *Model) OpenStatusChange(issue linear.Issue, states []linear.WorkflowSta
 }
 
 // OpenCreateIssue opens the create issue modal for the given team.
-func (m *Model) OpenCreateIssue(teamID string) {
-	m.createIssue = NewCreateIssue(teamID)
+func (m *Model) OpenCreateIssue(teamID string, currentUser *linear.User, meta *linear.TeamMetadata) {
+	m.createIssue = NewCreateIssue(teamID, currentUser, meta)
 	m.modalType = CreateIssue
+}
+
+// OpenEditIssue opens the edit issue modal for the given issue.
+func (m *Model) OpenEditIssue(issue linear.Issue, currentUser *linear.User, meta *linear.TeamMetadata) {
+	m.editIssue = NewEditIssue(issue, currentUser, meta)
+	m.modalType = EditIssue
 }
 
 // Close closes the active modal.
@@ -77,6 +86,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.createIssue, cmd = m.createIssue.Update(msg)
 		return m, cmd
+	case EditIssue:
+		var cmd tea.Cmd
+		m.editIssue, cmd = m.editIssue.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -93,6 +106,8 @@ func (m Model) View() string {
 		content = m.statusChange.View()
 	case CreateIssue:
 		content = m.createIssue.View()
+	case EditIssue:
+		content = m.editIssue.View()
 	}
 
 	// Wrap in modal style.

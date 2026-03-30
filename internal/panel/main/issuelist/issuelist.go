@@ -15,6 +15,7 @@ type Model struct {
 	teamID   string
 	pageInfo linear.PageInfo
 	focused  bool
+	compact  bool
 }
 
 // New creates a new issue list model.
@@ -33,12 +34,21 @@ func New() Model {
 
 	// Unbind h/l from pagination so we can use them for navigation.
 	l.KeyMap.PrevPage = key.NewBinding(
-		key.WithKeys("pgup", "b", "u"),
+		key.WithKeys("pgup", "b", "u", "ctrl+b"),
 		key.WithHelp("pgup", "prev page"),
 	)
 	l.KeyMap.NextPage = key.NewBinding(
-		key.WithKeys("pgdown", "f", "d"),
+		key.WithKeys("pgdown", "f", "d", "ctrl+f"),
 		key.WithHelp("pgdn", "next page"),
+	)
+
+	l.KeyMap.CursorUp = key.NewBinding(
+		key.WithKeys("up", "k", "ctrl+p"),
+		key.WithHelp("↑/k", "up"),
+	)
+	l.KeyMap.CursorDown = key.NewBinding(
+		key.WithKeys("down", "j", "ctrl+n"),
+		key.WithHelp("↓/j", "down"),
 	)
 
 	return Model{
@@ -56,6 +66,24 @@ func (m *Model) SetFocused(focused bool) {
 	m.focused = focused
 }
 
+// ToggleCompact toggles the compact mode of the list delegate.
+func (m *Model) ToggleCompact() {
+	m.SetCompact(!m.compact)
+}
+
+// SetCompact sets the compact mode of the list delegate.
+func (m *Model) SetCompact(compact bool) {
+	m.compact = compact
+	delegate := NewIssueDelegate()
+	delegate.Compact = m.compact
+	m.list.SetDelegate(delegate)
+}
+
+// IsCompact returns whether the list is in compact mode.
+func (m Model) IsCompact() bool {
+	return m.compact
+}
+
 // Focused returns whether the list is focused.
 func (m Model) Focused() bool {
 	return m.focused
@@ -71,6 +99,11 @@ func (m *Model) SetTeamID(teamID string) {
 	m.teamID = teamID
 	m.pageInfo = linear.PageInfo{}
 	m.list.SetItems(nil)
+}
+
+// SetFilterName updates the displayed title of the list.
+func (m *Model) SetFilterName(name string) {
+	m.list.Title = "Issues - " + name
 }
 
 // TeamID returns the current team ID.
@@ -112,6 +145,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "e":
+			if item, ok := m.list.SelectedItem().(IssueItem); ok {
+				return m, func() tea.Msg {
+					return appmsg.OpenEditIssueMsg{Issue: item.Issue}
+				}
+			}
+			return m, nil
+
 		case "c":
 			return m, func() tea.Msg {
 				return appmsg.OpenCreateIssueMsg{}
@@ -129,6 +170,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, func() tea.Msg {
 				return appmsg.RefreshIssuesMsg{}
 			}
+
+		case "v":
+			m.ToggleCompact()
+			return m, nil
 
 		case "h":
 			return m, func() tea.Msg {

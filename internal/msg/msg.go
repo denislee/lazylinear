@@ -24,6 +24,11 @@ type WorkflowStatesLoadedMsg struct {
 	States []linear.WorkflowState
 }
 
+// TeamMetadataLoadedMsg is sent when team metadata (members, projects, cycles) has been fetched.
+type TeamMetadataLoadedMsg struct {
+	Metadata *linear.TeamMetadata
+}
+
 // TeamSelectedMsg is sent when a team is selected in the sidebar.
 type TeamSelectedMsg struct {
 	Team linear.Team
@@ -40,6 +45,11 @@ type BackToListMsg struct{}
 // OpenCreateIssueMsg is sent to open the create issue modal.
 type OpenCreateIssueMsg struct{}
 
+// OpenEditIssueMsg is sent to open the edit issue modal.
+type OpenEditIssueMsg struct {
+	Issue linear.Issue
+}
+
 // OpenStatusChangeMsg is sent to open the status change modal.
 type OpenStatusChangeMsg struct {
 	Issue linear.Issue
@@ -47,6 +57,16 @@ type OpenStatusChangeMsg struct {
 
 // ModalClosedMsg is sent when a modal is closed.
 type ModalClosedMsg struct{}
+
+// IssueEditConfirmedMsg is sent when the user submits the edit issue form.
+type IssueEditConfirmedMsg struct {
+	IssueID     string
+	Title       *string
+	Description *string
+	Priority    *int
+	AssigneeID  *string
+	StateID     *string
+}
 
 // IssueCreatedMsg is sent when an issue has been created.
 type IssueCreatedMsg struct {
@@ -68,6 +88,9 @@ type RefreshIssuesMsg struct{}
 
 // FocusSidebarMsg is sent when the main panel wants to move focus to the sidebar.
 type FocusSidebarMsg struct{}
+
+// FocusMainPanelMsg is sent when the sidebar wants to move focus to the main panel.
+type FocusMainPanelMsg struct{}
 
 // ErrorMsg is sent when an error occurs.
 type ErrorMsg struct {

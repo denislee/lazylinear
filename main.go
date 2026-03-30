@@ -18,12 +18,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	state := config.LoadState()
 	client := linear.NewClient(cfg.APIKey)
-	model := app.NewApp(client)
+	model := app.NewApp(client, state)
 
 	p := tea.NewProgram(model)
-	if _, err := p.Run(); err != nil {
+	finalModel, err := p.Run()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)
+	}
+
+	if a, ok := finalModel.(app.App); ok {
+		state.LastTeamID = a.CurrentTeamID()
+		state.LastFilter = a.CurrentFilter()
+		state.CompactMode = a.IsCompact()
+		config.SaveState(state)
 	}
 }

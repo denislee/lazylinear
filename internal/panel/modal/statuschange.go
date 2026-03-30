@@ -50,11 +50,11 @@ func (m StatusChangeModel) Update(msg tea.Msg) (StatusChangeModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "j", "down":
+		case "j", "down", "ctrl+n":
 			if m.cursor < len(m.states)-1 {
 				m.cursor++
 			}
-		case "k", "up":
+		case "k", "up", "ctrl+p":
 			if m.cursor > 0 {
 				m.cursor--
 			}
@@ -68,7 +68,7 @@ func (m StatusChangeModel) Update(msg tea.Msg) (StatusChangeModel, tea.Cmd) {
 					}
 				}
 			}
-		case "esc":
+		case "esc", "ctrl+[":
 			return m, func() tea.Msg {
 				return appmsg.ModalClosedMsg{}
 			}

@@ -3,12 +3,14 @@ package modal
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/denislee/lazylinear/internal/linear"
 	appmsg "github.com/denislee/lazylinear/internal/msg"
 	"github.com/denislee/lazylinear/internal/theme"
 )
@@ -19,6 +21,9 @@ type IssueCreateConfirmedMsg struct {
 	Title       string
 	Description string
 	Priority    int
+	AssigneeID  *string
+	ProjectID   *string
+	CycleID     *string
 }
 
 // Priority labels indexed by their Linear API values.
@@ -29,13 +34,20 @@ type CreateIssueModel struct {
 	titleInput     textinput.Model
 	descInput      textarea.Model
 	priorityCursor int
-	focusIndex     int // 0=title, 1=desc, 2=priority, 3=submit
+	assigneeCursor int
+	projectCursor  int
+	cycleCursor    int
+	focusIndex     int // 0=title, 1=desc, 2=priority, 3=assignee, 4=project, 5=cycle, 6=submit
 	teamID         string
 	err            string
+
+	assignees []linear.User
+	projects  []linear.Project
+	cycles    []linear.Cycle
 }
 
 // NewCreateIssue creates a new issue creation form modal.
-func NewCreateIssue(teamID string) CreateIssueModel {
+func NewCreateIssue(teamID string, currentUser *linear.User, meta *linear.TeamMetadata) CreateIssueModel {
 	ti := textinput.New()
 	ti.Placeholder = "Issue title"
 	ti.CharLimit = 200
@@ -48,16 +60,48 @@ func NewCreateIssue(teamID string) CreateIssueModel {
 	ta.SetHeight(4)
 	ta.Blur()
 
-	return CreateIssueModel{
-		titleInput:     ti,
-		descInput:      ta,
-		priorityCursor: 0,
-		focusIndex:     0,
-		teamID:         teamID,
+	m := CreateIssueModel{
+		titleInput: ti,
+		descInput:  ta,
+		teamID:     teamID,
 	}
+
+	if meta != nil {
+		m.assignees = meta.Members
+		
+		var myProjects []linear.Project
+		for _, p := range meta.Projects {
+			if currentUser != nil && p.Lead != nil && p.Lead.ID == currentUser.ID {
+				myProjects = append(myProjects, p)
+			}
+		}
+		m.projects = myProjects
+		
+		m.cycles = meta.Cycles
+	}
+
+	// Set default assignee to current user
+	if currentUser != nil {
+		for i, a := range m.assignees {
+			if a.ID == currentUser.ID {
+				m.assigneeCursor = i + 1 // +1 because 0 is "Unassigned"
+				break
+			}
+		}
+	}
+
+	// Set default cycle to current cycle
+	now := time.Now()
+	for i, c := range m.cycles {
+		if now.After(c.StartsAt) && now.Before(c.EndsAt) {
+			m.cycleCursor = i + 1 // +1 because 0 is "No Cycle"
+			break
+		}
+	}
+
+	return m
 }
 
-// Update handles input for the create issue form.
 func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -66,49 +110,80 @@ func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
 		key := msg.String()
 
 		switch key {
-		case "esc":
+		case "esc", "ctrl+[":
 			return m, func() tea.Msg {
 				return appmsg.ModalClosedMsg{}
 			}
 
 		case "tab":
-			m.focusIndex = (m.focusIndex + 1) % 4
+			m.focusIndex = (m.focusIndex + 1) % 7
 			m.updateFocus()
 			return m, nil
 
 		case "shift+tab":
-			m.focusIndex = (m.focusIndex - 1 + 4) % 4
+			m.focusIndex = (m.focusIndex - 1 + 7) % 7
 			m.updateFocus()
 			return m, nil
 
 		case "enter":
-			if m.focusIndex == 3 {
-				// Submit.
+			if m.focusIndex == 6 {
 				return m.submit()
 			}
-			// For other fields, enter is handled below (e.g., newline in textarea).
 
 		default:
-			// When focused on priority, handle j/k.
-			if m.focusIndex == 2 {
+			switch m.focusIndex {
+			case 2: // Priority
 				switch key {
-				case "j", "down":
+				case "j", "down", "ctrl+n":
 					if m.priorityCursor < len(priorities)-1 {
 						m.priorityCursor++
 					}
-					return m, nil
-				case "k", "up":
+				case "k", "up", "ctrl+p":
 					if m.priorityCursor > 0 {
 						m.priorityCursor--
 					}
-					return m, nil
+				}
+				return m, nil
+			case 3: // Assignee
+				switch key {
+				case "j", "down", "ctrl+n":
+					if m.assigneeCursor < len(m.assignees) {
+						m.assigneeCursor++
+					}
+				case "k", "up", "ctrl+p":
+					if m.assigneeCursor > 0 {
+						m.assigneeCursor--
+					}
+				}
+				return m, nil
+			case 4: // Project
+				switch key {
+				case "j", "down", "ctrl+n":
+					if m.projectCursor < len(m.projects) {
+						m.projectCursor++
+					}
+				case "k", "up", "ctrl+p":
+					if m.projectCursor > 0 {
+						m.projectCursor--
+					}
+				}
+				return m, nil
+			case 5: // Cycle
+				switch key {
+				case "j", "down", "ctrl+n":
+					if m.cycleCursor < len(m.cycles) {
+						m.cycleCursor++
+					}
+				case "k", "up", "ctrl+p":
+					if m.cycleCursor > 0 {
+						m.cycleCursor--
+					}
 				}
 				return m, nil
 			}
 		}
 	}
 
-	// Forward messages to the focused input.
 	switch m.focusIndex {
 	case 0:
 		var cmd tea.Cmd
@@ -127,7 +202,6 @@ func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// updateFocus syncs the focused/blurred state of inputs with focusIndex.
 func (m *CreateIssueModel) updateFocus() {
 	m.err = ""
 	if m.focusIndex == 0 {
@@ -142,7 +216,6 @@ func (m *CreateIssueModel) updateFocus() {
 	}
 }
 
-// submit validates the form and fires the confirmed message.
 func (m CreateIssueModel) submit() (CreateIssueModel, tea.Cmd) {
 	title := strings.TrimSpace(m.titleInput.Value())
 	if title == "" {
@@ -153,19 +226,38 @@ func (m CreateIssueModel) submit() (CreateIssueModel, tea.Cmd) {
 	}
 
 	desc := strings.TrimSpace(m.descInput.Value())
-	priority := m.priorityCursor // 0=None, 1=Urgent, 2=High, 3=Medium, 4=Low
+	
+	var assigneeID *string
+	if m.assigneeCursor > 0 {
+		id := m.assignees[m.assigneeCursor-1].ID
+		assigneeID = &id
+	}
+
+	var projectID *string
+	if m.projectCursor > 0 {
+		id := m.projects[m.projectCursor-1].ID
+		projectID = &id
+	}
+
+	var cycleID *string
+	if m.cycleCursor > 0 {
+		id := m.cycles[m.cycleCursor-1].ID
+		cycleID = &id
+	}
 
 	return m, func() tea.Msg {
 		return IssueCreateConfirmedMsg{
 			TeamID:      m.teamID,
 			Title:       title,
 			Description: desc,
-			Priority:    priority,
+			Priority:    m.priorityCursor,
+			AssigneeID:  assigneeID,
+			ProjectID:   projectID,
+			CycleID:     cycleID,
 		}
 	}
 }
 
-// View renders the create issue form.
 func (m CreateIssueModel) View() string {
 	var b strings.Builder
 
@@ -173,7 +265,6 @@ func (m CreateIssueModel) View() string {
 	b.WriteString(title + "\n")
 	b.WriteString(theme.SubtitleStyle.Render(strings.Repeat("─", 40)) + "\n\n")
 
-	// Error message.
 	if m.err != "" {
 		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000"))
 		b.WriteString(errStyle.Render(m.err) + "\n\n")
@@ -182,7 +273,7 @@ func (m CreateIssueModel) View() string {
 	labelStyle := theme.SubtitleStyle
 	focusedLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Bold(true)
 
-	// Title field.
+	// Title
 	titleLabel := labelStyle.Render("Title:")
 	if m.focusIndex == 0 {
 		titleLabel = focusedLabel.Render("Title:")
@@ -190,7 +281,7 @@ func (m CreateIssueModel) View() string {
 	b.WriteString(titleLabel + "\n")
 	b.WriteString(m.titleInput.View() + "\n\n")
 
-	// Description field.
+	// Description
 	descLabel := labelStyle.Render("Description:")
 	if m.focusIndex == 1 {
 		descLabel = focusedLabel.Render("Description:")
@@ -198,32 +289,61 @@ func (m CreateIssueModel) View() string {
 	b.WriteString(descLabel + "\n")
 	b.WriteString(m.descInput.View() + "\n\n")
 
-	// Priority selector.
+	// Priority
 	prioLabel := labelStyle.Render("Priority:")
 	if m.focusIndex == 2 {
 		prioLabel = focusedLabel.Render("Priority:")
 	}
-	b.WriteString(prioLabel + "  ")
-	for i, p := range priorities {
-		style := lipgloss.NewStyle()
-		if i == m.priorityCursor {
-			style = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#7D56F4")).
-				Bold(true)
-			b.WriteString(style.Render(fmt.Sprintf("[%s]", p)))
-		} else {
-			b.WriteString(style.Render(fmt.Sprintf(" %s ", p)))
-		}
-		if i < len(priorities)-1 {
-			b.WriteString(" ")
-		}
-	}
+	b.WriteString(prioLabel + " ")
+	b.WriteString(renderDropdown(priorities[m.priorityCursor], m.focusIndex == 2))
 	b.WriteString("\n\n")
 
-	// Submit button.
-	submitStyle := lipgloss.NewStyle().
-		Padding(0, 2)
+	// Assignee
+	assigneeName := "Unassigned"
+	if m.assigneeCursor > 0 {
+		assigneeName = m.assignees[m.assigneeCursor-1].Name
+	}
+	assLabel := labelStyle.Render("Assignee:")
 	if m.focusIndex == 3 {
+		assLabel = focusedLabel.Render("Assignee:")
+	}
+	b.WriteString(assLabel + " ")
+	b.WriteString(renderDropdown(assigneeName, m.focusIndex == 3))
+	b.WriteString("\n\n")
+
+	// Project
+	projectName := "No Project"
+	if m.projectCursor > 0 {
+		projectName = m.projects[m.projectCursor-1].Name
+	}
+	projLabel := labelStyle.Render("Project: ")
+	if m.focusIndex == 4 {
+		projLabel = focusedLabel.Render("Project: ")
+	}
+	b.WriteString(projLabel + " ")
+	b.WriteString(renderDropdown(projectName, m.focusIndex == 4))
+	b.WriteString("\n\n")
+
+	// Cycle
+	cycleName := "No Cycle"
+	if m.cycleCursor > 0 {
+		c := m.cycles[m.cycleCursor-1]
+		cycleName = fmt.Sprintf("Cycle %d", c.Number)
+		if c.Name != "" {
+			cycleName = c.Name
+		}
+	}
+	cycLabel := labelStyle.Render("Cycle:   ")
+	if m.focusIndex == 5 {
+		cycLabel = focusedLabel.Render("Cycle:   ")
+	}
+	b.WriteString(cycLabel + " ")
+	b.WriteString(renderDropdown(cycleName, m.focusIndex == 5))
+	b.WriteString("\n\n")
+
+	// Submit button
+	submitStyle := lipgloss.NewStyle().Padding(0, 2)
+	if m.focusIndex == 6 {
 		submitStyle = submitStyle.
 			Background(lipgloss.Color("#7D56F4")).
 			Foreground(lipgloss.Color("#FFFFFF")).
@@ -235,7 +355,16 @@ func (m CreateIssueModel) View() string {
 	}
 	b.WriteString(submitStyle.Render("Submit") + "\n\n")
 
-	b.WriteString(theme.SubtitleStyle.Render("tab/shift+tab: navigate  enter: submit  esc: cancel"))
+	b.WriteString(theme.SubtitleStyle.Render("tab/shift+tab: navigate  j/k: select  enter: submit  esc: cancel"))
 
 	return b.String()
+}
+
+func renderDropdown(val string, focused bool) string {
+	style := lipgloss.NewStyle()
+	if focused {
+		style = style.Foreground(lipgloss.Color("#7D56F4")).Bold(true)
+		return style.Render(fmt.Sprintf("< %s >", val))
+	}
+	return style.Render(fmt.Sprintf("[ %s ]", val))
 }

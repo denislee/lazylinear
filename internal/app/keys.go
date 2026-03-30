@@ -18,5 +18,6 @@ const (
 	KeyShiftG       = "G"
 	KeyQuestionMark = "?"
 	KeyC            = "c"
+	KeyE            = "e"
 	KeyS            = "s"
 )

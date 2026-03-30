@@ -18,6 +18,10 @@ const issueFragment = `
 		name
 		email
 	}
+	project {
+		id
+		name
+	}
 	labels {
 		nodes {
 			id
@@ -74,6 +78,37 @@ const queryWorkflowStates = `query($teamId: String!) {
 				color
 				type
 				position
+			}
+		}
+	}
+}`
+
+const queryTeamMetadata = `query($teamId: String!) {
+	team(id: $teamId) {
+		members {
+			nodes {
+				id
+				name
+				email
+			}
+		}
+		projects {
+			nodes {
+				id
+				name
+				lead {
+					id
+				}
+			}
+		}
+		cycles {
+			nodes {
+				id
+				number
+				name
+				startsAt
+				endsAt
+				completedAt
 			}
 		}
 	}

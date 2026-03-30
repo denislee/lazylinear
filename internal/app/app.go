@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/denislee/lazylinear/internal/config"
 	"github.com/denislee/lazylinear/internal/linear"
 	mainpanel "github.com/denislee/lazylinear/internal/panel/main"
 	"github.com/denislee/lazylinear/internal/panel/modal"
@@ -25,21 +26,22 @@ const (
 
 // App is the root Bubble Tea model.
 type App struct {
-	ctx              *AppContext
-	sidebar          sidebar.Model
-	mainPanel        mainpanel.Model
-	statusBar        statusbar.Model
-	modal            modal.Model
-	layout           Layout
-	focus            PanelID
-	ready            bool
-	showHelp         bool
-	activeFilter     string        // current filter: "My Issues", "All Issues", "Active", "Backlog"
-	pendingIssue     *linear.Issue // issue awaiting workflow states for status change
-}
-
-// NewApp creates a new root App model.
-func NewApp(client *linear.Client) App {
+	ctx          *AppContext
+	sidebar      sidebar.Model
+	mainPanel    mainpanel.Model
+	statusBar    statusbar.Model
+	modal        modal.Model
+	layout       Layout
+	focus        PanelID
+	ready        bool
+	showHelp     bool
+	activeFilter       string        // current filter: "My Issues", "All Issues", "Active", "Backlog"
+	pendingIssue       *linear.Issue // issue awaiting workflow states for status change
+	pendingEditIssue   *linear.Issue // issue awaiting metadata for edit modal
+	pendingCreateIssue bool          // whether we are waiting for metadata to create an issue
+	}
+	// NewApp creates a new root App model.
+func NewApp(client *linear.Client, state *config.State) App {
 	ctx := &AppContext{
 		Client: client,
 	}
@@ -47,8 +49,21 @@ func NewApp(client *linear.Client) App {
 	sb := sidebar.New()
 	sb.SetFocused(true)
 
+	if state != nil {
+		sb.SetInitialState(state.LastTeamID, state.LastFilter)
+	}
+
 	mp := mainpanel.New()
 	mp.SetFocused(false)
+
+	filter := "All Issues"
+	if state != nil {
+		if state.LastFilter != "" {
+			filter = state.LastFilter
+		}
+		mp.SetCompact(state.CompactMode)
+	}
+	mp.SetFilterName(filter)
 
 	return App{
 		ctx:          ctx,
@@ -57,7 +72,7 @@ func NewApp(client *linear.Client) App {
 		statusBar:    statusbar.New(),
 		modal:        modal.New(),
 		focus:        PanelSidebar,
-		activeFilter: "All Issues",
+		activeFilter: filter,
 	}
 }
 
@@ -68,6 +83,24 @@ func (a App) Init() tea.Cmd {
 		a.fetchViewer(),
 		a.fetchTeams(),
 	)
+}
+
+// CurrentTeamID returns the currently selected team ID.
+func (a App) CurrentTeamID() string {
+	if a.ctx.CurrentTeam != nil {
+		return a.ctx.CurrentTeam.ID
+	}
+	return ""
+}
+
+// CurrentFilter returns the currently selected filter.
+func (a App) CurrentFilter() string {
+	return a.activeFilter
+}
+
+// IsCompact returns whether the list is in compact mode.
+func (a App) IsCompact() bool {
+	return a.mainPanel.IsCompact()
 }
 
 // Update implements tea.Model.
@@ -130,6 +163,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cycleFocus(-1)
 			a.updateStatusBarHints()
 			return a, nil
+		case "v":
+			// Toggle compact mode globally, even if sidebar is focused
+			if !a.mainPanel.IsFiltering() {
+				a.mainPanel.ToggleCompact()
+				return a, nil
+			}
+			return a.routeKeyToFocused(msg)
 		default:
 			// Route to focused panel.
 			return a.routeKeyToFocused(msg)
@@ -175,6 +215,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Fetch issues for the newly selected team with the active filter.
 		cmds = append(cmds, a.fetchIssues(team.ID, a.activeFilter))
+		// Also fetch team metadata to update sidebar filters
+		cmds = append(cmds, a.fetchTeamMetadata(team.ID))
 		a.updateStatusBarHints()
 		return a, tea.Batch(cmds...)
 
@@ -182,6 +224,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.activeFilter = msg.Filter
 		// Update status bar with filter context.
 		a.statusBar.SetFilter(msg.Filter)
+		a.mainPanel.SetFilterName(msg.Filter)
 		// Re-fetch issues with the new filter if we have a team.
 		if a.ctx.CurrentTeam != nil {
 			updatedMain, cmd := a.mainPanel.Update(msg)
@@ -203,6 +246,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 
 	case RefreshIssuesMsg:
+		updatedMain, cmd := a.mainPanel.Update(msg)
+		a.mainPanel = updatedMain.(mainpanel.Model)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if a.ctx.CurrentTeam != nil {
 			cmds = append(cmds, a.fetchIssues(a.ctx.CurrentTeam.ID, a.activeFilter))
 		}
@@ -212,6 +260,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.focus = PanelSidebar
 		a.sidebar.SetFocused(true)
 		a.mainPanel.SetFocused(false)
+		a.updateStatusBarHints()
+		return a, nil
+
+	case FocusMainPanelMsg:
+		a.focus = PanelMain
+		a.sidebar.SetFocused(false)
+		a.mainPanel.SetFocused(true)
 		a.updateStatusBarHints()
 		return a, nil
 
@@ -235,9 +290,64 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case OpenCreateIssueMsg:
-		// Open the create issue modal for the current team.
+		// Fetch team metadata first, then open the create issue modal.
 		if a.ctx.CurrentTeam != nil {
-			a.modal.OpenCreateIssue(a.ctx.CurrentTeam.ID)
+			a.pendingCreateIssue = true
+			cmds = append(cmds, a.fetchTeamMetadata(a.ctx.CurrentTeam.ID))
+		}
+		return a, tea.Batch(cmds...)
+
+	case OpenEditIssueMsg:
+		issue := msg.Issue
+		a.pendingEditIssue = &issue
+		if a.ctx.CurrentTeam != nil {
+			cmds = append(cmds, a.fetchTeamMetadata(a.ctx.CurrentTeam.ID))
+		}
+		return a, tea.Batch(cmds...)
+
+	case TeamMetadataLoadedMsg:
+		if a.ctx.CurrentTeam != nil {
+			if a.pendingEditIssue != nil {
+				a.modal.OpenEditIssue(*a.pendingEditIssue, a.ctx.CurrentUser, msg.Metadata)
+				a.pendingEditIssue = nil
+			} else if a.pendingCreateIssue {
+				a.modal.OpenCreateIssue(a.ctx.CurrentTeam.ID, a.ctx.CurrentUser, msg.Metadata)
+				a.pendingCreateIssue = false
+			}
+
+			if msg.Metadata != nil {
+				a.ctx.CurrentProjects = msg.Metadata.Projects
+				
+				filters := []string{
+					"My Issues",
+					"My Issues + Active",
+					"My Issues + Backlog",
+					"All Issues",
+					"Active",
+					"Backlog",
+				}
+				
+				if a.ctx.CurrentUser != nil {
+					for _, p := range msg.Metadata.Projects {
+						if p.Lead != nil && p.Lead.ID == a.ctx.CurrentUser.ID {
+							projectName := formatProjectNameForFilter(p.Name)
+							filters = append(filters, projectName)
+							filters = append(filters, projectName+" + Active")
+							filters = append(filters, projectName+" + Backlog")
+						}
+					}
+				}
+				
+				a.sidebar.SetFilters(filters)
+			}
+			
+			// Forward TeamMetadataLoadedMsg to sidebar to update filters
+			updatedSidebar, cmd := a.sidebar.Update(msg)
+			a.sidebar = updatedSidebar.(sidebar.Model)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return a, tea.Batch(cmds...)
 		}
 		return a, nil
 
@@ -257,6 +367,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, a.createIssue(msg))
 		return a, tea.Batch(cmds...)
 
+	case IssueEditConfirmedMsg:
+		a.modal.Close()
+		cmds = append(cmds, a.editIssue(msg))
+		return a, tea.Batch(cmds...)
+
 	// --- Mutation results ---
 
 	case IssueUpdatedMsg:
@@ -270,6 +385,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Refresh the issue list with current filter.
 		if a.ctx.CurrentTeam != nil {
 			cmds = append(cmds, a.fetchIssues(a.ctx.CurrentTeam.ID, a.activeFilter))
+		}
+		return a, tea.Batch(cmds...)
+
+	case IssueSelectedMsg, BackToListMsg:
+		// Forward to main panel.
+		updatedMain, cmd := a.mainPanel.Update(msg)
+		a.mainPanel = updatedMain.(mainpanel.Model)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 		return a, tea.Batch(cmds...)
 
@@ -399,7 +523,7 @@ func (a App) fetchTeams() tea.Cmd {
 
 // fetchIssues returns a command that fetches issues for the given team with an optional status filter.
 func (a App) fetchIssues(teamID string, filterName string) tea.Cmd {
-	filter := buildIssueFilter(filterName, a.ctx.CurrentUser)
+	filter := buildIssueFilter(filterName, a.ctx.CurrentUser, a.ctx.CurrentProjects)
 	return func() tea.Msg {
 		conn, err := a.ctx.Client.GetIssues(teamID, 50, "", filter)
 		if err != nil {
@@ -413,13 +537,49 @@ func (a App) fetchIssues(teamID string, filterName string) tea.Cmd {
 }
 
 // buildIssueFilter converts a sidebar filter name to a Linear GraphQL IssueFilter.
-func buildIssueFilter(filterName string, currentUser *linear.User) map[string]any {
+func buildIssueFilter(filterName string, currentUser *linear.User, projects []linear.Project) map[string]any {
 	switch filterName {
 	case "My Issues":
 		if currentUser != nil {
 			return map[string]any{
 				"assignee": map[string]any{
 					"id": map[string]any{"eq": currentUser.ID},
+				},
+			}
+		}
+		return nil
+	case "My Issues + Active":
+		if currentUser != nil {
+			return map[string]any{
+				"and": []map[string]any{
+					{
+						"assignee": map[string]any{
+							"id": map[string]any{"eq": currentUser.ID},
+						},
+					},
+					{
+						"state": map[string]any{
+							"type": map[string]any{"eq": "started"},
+						},
+					},
+				},
+			}
+		}
+		return nil
+	case "My Issues + Backlog":
+		if currentUser != nil {
+			return map[string]any{
+				"and": []map[string]any{
+					{
+						"assignee": map[string]any{
+							"id": map[string]any{"eq": currentUser.ID},
+						},
+					},
+					{
+						"state": map[string]any{
+							"type": map[string]any{"in": []string{"backlog", "triage"}},
+						},
+					},
 				},
 			}
 		}
@@ -439,9 +599,73 @@ func buildIssueFilter(filterName string, currentUser *linear.User) map[string]an
 		}
 	case "All Issues":
 		return nil
-	default:
-		return nil
 	}
+
+	// Check for dynamic project filters
+	for _, p := range projects {
+		projectName := formatProjectNameForFilter(p.Name)
+		if filterName == projectName {
+			return map[string]any{
+				"project": map[string]any{
+					"id": map[string]any{"eq": p.ID},
+				},
+			}
+		}
+		if filterName == projectName+" + Active" {
+			return map[string]any{
+				"and": []map[string]any{
+					{
+						"project": map[string]any{
+							"id": map[string]any{"eq": p.ID},
+						},
+					},
+					{
+						"state": map[string]any{
+							"type": map[string]any{"eq": "started"},
+						},
+					},
+				},
+			}
+		}
+		if filterName == projectName+" + Backlog" {
+			return map[string]any{
+				"and": []map[string]any{
+					{
+						"project": map[string]any{
+							"id": map[string]any{"eq": p.ID},
+						},
+					},
+					{
+						"state": map[string]any{
+							"type": map[string]any{"in": []string{"backlog", "triage"}},
+						},
+					},
+				},
+			}
+		}
+	}
+
+	return nil
+}
+
+// formatProjectNameForFilter removes any text between brackets and the brackets themselves.
+func formatProjectNameForFilter(name string) string {
+	var result []rune
+	inBracket := false
+	for _, r := range name {
+		if r == '[' {
+			inBracket = true
+			continue
+		}
+		if r == ']' {
+			inBracket = false
+			continue
+		}
+		if !inBracket {
+			result = append(result, r)
+		}
+	}
+	return strings.TrimSpace(string(result))
 }
 
 // fetchWorkflowStates returns a command that fetches workflow states for a team.
@@ -452,6 +676,17 @@ func (a App) fetchWorkflowStates(teamID string) tea.Cmd {
 			return ErrorMsg{Err: fmt.Errorf("fetch workflow states: %w", err)}
 		}
 		return WorkflowStatesLoadedMsg{States: states}
+	}
+}
+
+// fetchTeamMetadata returns a command that fetches team metadata (members, projects, cycles).
+func (a App) fetchTeamMetadata(teamID string) tea.Cmd {
+	return func() tea.Msg {
+		meta, err := a.ctx.Client.GetTeamMetadata(teamID)
+		if err != nil {
+			return ErrorMsg{Err: fmt.Errorf("fetch team metadata: %w", err)}
+		}
+		return TeamMetadataLoadedMsg{Metadata: meta}
 	}
 }
 
@@ -476,10 +711,10 @@ func (a *App) updateStatusBarHints() {
 	}
 	switch a.focus {
 	case PanelSidebar:
-		a.statusBar.SetHints("j/k: navigate | enter: select | tab: issues | ?: help")
+		a.statusBar.SetHints("j/k: navigate | enter: select | l: select & focus | tab: issues | ?: help")
 	case PanelMain:
-		if a.ctx.CurrentTeam != nil {
-			a.statusBar.SetHints("j/k: navigate | /: filter | enter: open | c: create | s: status | ?: help")
+		if a.mainPanel.Focused() {
+			a.statusBar.SetHints("j/k: navigate | /: filter | enter: open | c: create | e: edit | s: status | v: compact | ?: help")
 		} else {
 			a.statusBar.SetHints("tab: teams | ?: help")
 		}
@@ -530,6 +765,7 @@ func (a App) renderHelp() string {
 				{"/", "filter issues"},
 				{"enter / l", "open issue detail"},
 				{"c", "create new issue"},
+				{"e", "edit issue"},
 				{"s", "change status"},
 				{"r", "refresh list"},
 				{"h", "focus sidebar"},
@@ -540,6 +776,7 @@ func (a App) renderHelp() string {
 			keys: []struct{ key, desc string }{
 				{"j / k", "scroll up/down"},
 				{"esc / h / q", "back to list"},
+				{"e", "edit issue"},
 				{"s", "change status"},
 			},
 		},
@@ -588,13 +825,48 @@ func (a App) createIssue(confirmed modal.IssueCreateConfirmedMsg) tea.Cmd {
 			input.Description = &desc
 		}
 		if confirmed.Priority > 0 {
-			p := confirmed.Priority
-			input.Priority = &p
+			prio := confirmed.Priority
+			input.Priority = &prio
 		}
-		created, err := a.ctx.Client.CreateIssue(input)
+		if confirmed.AssigneeID != nil {
+			input.AssigneeID = confirmed.AssigneeID
+		}
+		if confirmed.ProjectID != nil {
+			input.ProjectID = confirmed.ProjectID
+		}
+		if confirmed.CycleID != nil {
+			input.CycleID = confirmed.CycleID
+		}
+
+		issue, err := a.ctx.Client.CreateIssue(input)
 		if err != nil {
 			return ErrorMsg{Err: fmt.Errorf("create issue: %w", err)}
 		}
-		return IssueCreatedMsg{Issue: *created}
+		return IssueCreatedMsg{Issue: *issue}
+	}
+}
+
+// editIssue returns a command that edits an existing issue.
+func (a App) editIssue(confirmed IssueEditConfirmedMsg) tea.Cmd {
+	return func() tea.Msg {
+		input := linear.IssueUpdateInput{
+			Title:       confirmed.Title,
+			Description: confirmed.Description,
+		}
+		if confirmed.Priority != nil {
+			input.Priority = confirmed.Priority
+		}
+		if confirmed.AssigneeID != nil {
+			input.AssigneeID = confirmed.AssigneeID
+		}
+		if confirmed.StateID != nil {
+			input.StateID = confirmed.StateID
+		}
+
+		issue, err := a.ctx.Client.UpdateIssue(confirmed.IssueID, input)
+		if err != nil {
+			return ErrorMsg{Err: fmt.Errorf("edit issue: %w", err)}
+		}
+		return IssueUpdatedMsg{Issue: *issue}
 	}
 }

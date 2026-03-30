@@ -9,6 +9,23 @@ type User struct {
 	Email string `json:"email"`
 }
 
+// Project represents a Linear project.
+type Project struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Lead *User  `json:"lead"`
+}
+
+// Cycle represents a Linear cycle.
+type Cycle struct {
+	ID          string    `json:"id"`
+	Number      int       `json:"number"`
+	Name        string    `json:"name"`
+	StartsAt    time.Time `json:"startsAt"`
+	EndsAt      time.Time `json:"endsAt"`
+	CompletedAt *time.Time `json:"completedAt"`
+}
+
 // Team represents a Linear team.
 type Team struct {
 	ID  string `json:"id"`
@@ -41,6 +58,7 @@ type Issue struct {
 	Priority    int           `json:"priority"`
 	State       WorkflowState `json:"state"`
 	Assignee    *User         `json:"assignee"`
+	Project     *Project      `json:"project"`
 	Labels      struct {
 		Nodes []Label `json:"nodes"`
 	} `json:"labels"`
@@ -68,6 +86,8 @@ type IssueCreateInput struct {
 	StateID     *string `json:"stateId,omitempty"`
 	AssigneeID  *string `json:"assigneeId,omitempty"`
 	Priority    *int    `json:"priority,omitempty"`
+	ProjectID   *string `json:"projectId,omitempty"`
+	CycleID     *string `json:"cycleId,omitempty"`
 }
 
 // IssueUpdateInput represents the input for updating an issue.

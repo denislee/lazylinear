@@ -10,16 +10,20 @@ type (
 	TeamsLoadedMsg          = msg.TeamsLoadedMsg
 	IssuesLoadedMsg         = msg.IssuesLoadedMsg
 	WorkflowStatesLoadedMsg = msg.WorkflowStatesLoadedMsg
+	TeamMetadataLoadedMsg   = msg.TeamMetadataLoadedMsg
 	TeamSelectedMsg         = msg.TeamSelectedMsg
 	IssueSelectedMsg        = msg.IssueSelectedMsg
 	BackToListMsg           = msg.BackToListMsg
 	OpenCreateIssueMsg      = msg.OpenCreateIssueMsg
+	OpenEditIssueMsg        = msg.OpenEditIssueMsg
 	OpenStatusChangeMsg     = msg.OpenStatusChangeMsg
 	ModalClosedMsg          = msg.ModalClosedMsg
+	IssueEditConfirmedMsg   = msg.IssueEditConfirmedMsg
 	IssueCreatedMsg         = msg.IssueCreatedMsg
 	IssueUpdatedMsg         = msg.IssueUpdatedMsg
 	FilterSelectedMsg       = msg.FilterSelectedMsg
 	RefreshIssuesMsg        = msg.RefreshIssuesMsg
 	FocusSidebarMsg         = msg.FocusSidebarMsg
+	FocusMainPanelMsg       = msg.FocusMainPanelMsg
 	ErrorMsg                = msg.ErrorMsg
 )

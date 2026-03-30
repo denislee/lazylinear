@@ -75,12 +75,32 @@ func (m *Model) SetFocused(focused bool) {
 	m.issueDetail.SetFocused(focused)
 }
 
+// SetFilterName passes the filter name down to the issue list.
+func (m *Model) SetFilterName(name string) {
+	m.issueList.SetFilterName(name)
+}
+
 // Focused returns whether the main panel is focused.
 func (m Model) Focused() bool {
 	return m.focused
 }
 
-// IsFiltering returns true if the active sub-view is in filtering mode.
+// ToggleCompact toggles the compact mode in the issue list.
+func (m *Model) ToggleCompact() {
+	m.issueList.ToggleCompact()
+}
+
+// SetCompact sets the compact mode in the issue list.
+func (m *Model) SetCompact(compact bool) {
+	m.issueList.SetCompact(compact)
+}
+
+// IsCompact returns whether the issue list is in compact mode.
+func (m Model) IsCompact() bool {
+	return m.issueList.IsCompact()
+}
+
+// IsFiltering returns true if the issue list is in active filtering mode.
 // This is used by the app to avoid intercepting keys during filtering.
 func (m Model) IsFiltering() bool {
 	if m.activeView == listView {
@@ -106,6 +126,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case appmsg.FilterSelectedMsg:
 		m.activeView = listView
+		m.loading = true
+		return m, m.spinner.Tick
+
+	case appmsg.RefreshIssuesMsg:
 		m.loading = true
 		return m, m.spinner.Tick
 
@@ -208,8 +232,8 @@ func (m Model) View() tea.View {
 	}
 
 	rendered := borderStyle.
-		Width(innerWidth).
-		Height(innerHeight).
+		Width(m.width).
+		Height(m.height).
 		Render(content)
 
 	return tea.NewView(rendered)

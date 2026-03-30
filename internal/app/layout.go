@@ -9,16 +9,16 @@ type Layout struct {
 }
 
 // ComputeLayout calculates panel dimensions from the terminal size.
-// Sidebar = min(30, width/4). Main = width - sidebarWidth - 2 (borders).
-// ContentHeight = height - 3 (status bar + borders). StatusBarHeight = 1.
+// Sidebar = min(30, width/4). Main = width - sidebarWidth.
+// ContentHeight = height - 1 (status bar). StatusBarHeight = 1.
 func ComputeLayout(width, height int) Layout {
 	sidebarWidth := max(10, min(30, width/4))
 
-	// Account for borders on both sidebar and main panels (1 char each side).
-	mainWidth := max(10, width-sidebarWidth-2)
+	// Main panel takes the rest of the available width.
+	mainWidth := max(10, width-sidebarWidth)
 
-	// Reserve space for status bar (1 line) and top/bottom borders (2 lines).
-	contentHeight := max(3, height-3)
+	// Reserve space for status bar (1 line). The panels handle their own borders internally.
+	contentHeight := max(3, height-1)
 
 	return Layout{
 		SidebarWidth:    sidebarWidth,

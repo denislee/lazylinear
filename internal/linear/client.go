@@ -169,6 +169,41 @@ func (c *Client) GetWorkflowStates(teamID string) ([]WorkflowState, error) {
 	return resp.Team.States.Nodes, nil
 }
 
+// TeamMetadata holds members, projects, and cycles for a team.
+type TeamMetadata struct {
+	Members  []User
+	Projects []Project
+	Cycles   []Cycle
+}
+
+// GetTeamMetadata returns members, projects, and cycles for a team.
+func (c *Client) GetTeamMetadata(teamID string) (*TeamMetadata, error) {
+	vars := map[string]any{
+		"teamId": teamID,
+	}
+	var resp struct {
+		Team struct {
+			Members struct {
+				Nodes []User `json:"nodes"`
+			} `json:"members"`
+			Projects struct {
+				Nodes []Project `json:"nodes"`
+			} `json:"projects"`
+			Cycles struct {
+				Nodes []Cycle `json:"nodes"`
+			} `json:"cycles"`
+		} `json:"team"`
+	}
+	if err := c.execute(queryTeamMetadata, vars, &resp); err != nil {
+		return nil, err
+	}
+	return &TeamMetadata{
+		Members:  resp.Team.Members.Nodes,
+		Projects: resp.Team.Projects.Nodes,
+		Cycles:   resp.Team.Cycles.Nodes,
+	}, nil
+}
+
 // CreateIssue creates a new issue and returns it.
 func (c *Client) CreateIssue(input IssueCreateInput) (*Issue, error) {
 	vars := map[string]any{
