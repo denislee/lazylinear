@@ -36,7 +36,7 @@ type App struct {
 	focus              PanelID
 	ready              bool
 	showHelp           bool
-	activeFilter       string        // current filter: "My Issues", "All Issues", "Active", "Backlog"
+	activeFilter       string        // current filter: "My Issues", "All Issues", "Active"
 	pendingIssue       *linear.Issue // issue awaiting workflow states for status change
 	pendingEditIssue   *linear.Issue // issue awaiting metadata for edit modal
 	pendingCreateIssue bool          // whether we are waiting for metadata to create an issue
@@ -341,7 +341,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					"My Issues",
 					"My Unlabeled Issues",
 					"My Issues + Active",
-					"My Issues + Backlog",
 				}
 
 				if a.ctx.CurrentUser != nil {
@@ -352,7 +351,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							projectName := formatProjectNameForFilter(p.Name)
 							projectFilters = append(projectFilters, projectName)
 							projectFilters = append(projectFilters, projectName+" + Active")
-							projectFilters = append(projectFilters, projectName+" + Backlog")
 						}
 					}
 					if len(projectFilters) > 0 {
@@ -362,7 +360,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				filters = append(filters, "---")
-				filters = append(filters, "All Issues", "Active", "Backlog")
+				filters = append(filters, "All Issues", "Active")
 
 				a.sidebar.SetFilters(filters)
 
@@ -640,35 +638,11 @@ func buildIssueFilter(filterName string, currentUser *linear.User, projects []li
 			}
 		}
 		return nil
-	case "My Issues + Backlog":
-		if currentUser != nil {
-			return map[string]any{
-				"and": []map[string]any{
-					{
-						"assignee": map[string]any{
-							"id": map[string]any{"eq": currentUser.ID},
-						},
-					},
-					{
-						"state": map[string]any{
-							"type": map[string]any{"in": []string{"backlog", "triage"}},
-						},
-					},
-				},
-			}
-		}
-		return nil
 	case "Active":
 		// Linear state types: "started" covers In Progress, In Review, etc.
 		return map[string]any{
 			"state": map[string]any{
 				"type": map[string]any{"eq": "started"},
-			},
-		}
-	case "Backlog":
-		return map[string]any{
-			"state": map[string]any{
-				"type": map[string]any{"in": []string{"backlog", "triage"}},
 			},
 		}
 	case "All Issues":
@@ -696,22 +670,6 @@ func buildIssueFilter(filterName string, currentUser *linear.User, projects []li
 					{
 						"state": map[string]any{
 							"type": map[string]any{"eq": "started"},
-						},
-					},
-				},
-			}
-		}
-		if filterName == projectName+" + Backlog" {
-			return map[string]any{
-				"and": []map[string]any{
-					{
-						"project": map[string]any{
-							"id": map[string]any{"eq": p.ID},
-						},
-					},
-					{
-						"state": map[string]any{
-							"type": map[string]any{"in": []string{"backlog", "triage"}},
 						},
 					},
 				},

@@ -51,10 +51,8 @@ func New() Model {
 			"My Issues",
 			"My Unlabeled Issues",
 			"My Issues + Active",
-			"My Issues + Backlog",
 			"All Issues",
 			"Active",
-			"Backlog",
 		},
 	}
 }

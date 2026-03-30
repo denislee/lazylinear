@@ -80,7 +80,7 @@ type IssueUpdatedMsg struct {
 
 // FilterSelectedMsg is sent when a filter is selected in the sidebar.
 type FilterSelectedMsg struct {
-	Filter string // filter name: "My Issues", "All Issues", "Active", "Backlog"
+	Filter string // filter name: "My Issues", "All Issues", "Active"
 }
 
 // AutoTagIssuesMsg is sent to auto-tag issues with Gemini CLI.
