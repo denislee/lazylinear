@@ -51,6 +51,15 @@ func New() Model {
 		key.WithHelp("↓/j", "down"),
 	)
 
+	l.KeyMap.CancelWhileFiltering = key.NewBinding(
+		key.WithKeys("esc", "ctrl+["),
+		key.WithHelp("esc", "cancel filter"),
+	)
+	l.KeyMap.ClearFilter = key.NewBinding(
+		key.WithKeys("esc", "ctrl+["),
+		key.WithHelp("esc", "clear filter"),
+	)
+
 	return Model{
 		list: l,
 	}
@@ -137,7 +146,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		// Handle our custom keys before passing to the list.
 		switch msg.String() {
-		case "enter", "l":
+		case "enter":
+			if item, ok := m.list.SelectedItem().(IssueItem); ok {
+				return m, func() tea.Msg {
+					return appmsg.OpenIssueInBrowserMsg{Issue: item.Issue}
+				}
+			}
+			return m, nil
+
+		case "l":
 			if item, ok := m.list.SelectedItem().(IssueItem); ok {
 				return m, func() tea.Msg {
 					return appmsg.IssueSelectedMsg{Issue: item.Issue}
@@ -178,7 +195,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return appmsg.RefreshIssuesMsg{}
 			}
 
-		case "h":
+		case "h", "esc", "ctrl+[":
 			return m, func() tea.Msg {
 				return appmsg.FocusSidebarMsg{}
 			}

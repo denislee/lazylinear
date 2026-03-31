@@ -13,6 +13,7 @@ type (
 	TeamMetadataLoadedMsg   = msg.TeamMetadataLoadedMsg
 	TeamSelectedMsg         = msg.TeamSelectedMsg
 	IssueSelectedMsg        = msg.IssueSelectedMsg
+	OpenIssueInBrowserMsg   = msg.OpenIssueInBrowserMsg
 	BackToListMsg           = msg.BackToListMsg
 	OpenCreateIssueMsg      = msg.OpenCreateIssueMsg
 	OpenEditIssueMsg        = msg.OpenEditIssueMsg

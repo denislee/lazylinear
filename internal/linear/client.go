@@ -315,7 +315,8 @@ func (c *Client) GetFilterCounts(teamID string, filters map[string]map[string]an
 		aliasToName[alias] = name
 		varName := fmt.Sprintf("$filter%d", i)
 		varDefs = append(varDefs, fmt.Sprintf("%s: IssueFilter", varName))
-		aliases = append(aliases, fmt.Sprintf("%s: issues(first: 250, filter: %s) { nodes { id } }", alias, varName))
+		// We fetch labels here because server-side filtering for 'My Unlabeled Issues' is broken in Linear's GraphQL API.
+		aliases = append(aliases, fmt.Sprintf("%s: issues(first: 250, filter: %s) { nodes { id labels { nodes { id } } } }", alias, varName))
 		vars[fmt.Sprintf("filter%d", i)] = filter
 		i++
 	}
@@ -339,13 +340,29 @@ func (c *Client) GetFilterCounts(teamID string, filters map[string]map[string]an
 		}
 		var conn struct {
 			Nodes []struct {
-				ID string `json:"id"`
+				ID     string `json:"id"`
+				Labels struct {
+					Nodes []struct {
+						ID string `json:"id"`
+					} `json:"nodes"`
+				} `json:"labels"`
 			} `json:"nodes"`
 		}
 		if err := json.Unmarshal(raw, &conn); err != nil {
 			continue
 		}
-		counts[name] = len(conn.Nodes)
+		
+		count := 0
+		if name == "My Unlabeled Issues" {
+			for _, n := range conn.Nodes {
+				if len(n.Labels.Nodes) == 0 {
+					count++
+				}
+			}
+		} else {
+			count = len(conn.Nodes)
+		}
+		counts[name] = count
 	}
 
 	return counts, nil

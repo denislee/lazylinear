@@ -39,6 +39,11 @@ type IssueSelectedMsg struct {
 	Issue linear.Issue
 }
 
+// OpenIssueInBrowserMsg is sent to open the issue in the web browser.
+type OpenIssueInBrowserMsg struct {
+	Issue linear.Issue
+}
+
 // BackToListMsg is sent to navigate back to the issue list.
 type BackToListMsg struct{}
 

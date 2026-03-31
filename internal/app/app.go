@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"charm.land/bubbles/v2/spinner"
@@ -339,8 +340,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				filters := []string{
 					"My Issues",
-					"My Unlabeled Issues",
 					"My Issues + Active",
+					"My Unlabeled Issues",
 				}
 
 				if a.ctx.CurrentUser != nil {
@@ -427,6 +428,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		return a, tea.Batch(cmds...)
+
+	case OpenIssueInBrowserMsg:
+		return a, openBrowser(msg.Issue.URL)
 
 	case ErrorMsg:
 		// Forward to status bar.
@@ -560,12 +564,31 @@ func (a App) fetchTeams() tea.Cmd {
 func (a App) fetchIssues(teamID string, filterName string) tea.Cmd {
 	filter := buildIssueFilter(filterName, a.ctx.CurrentUser, a.ctx.CurrentProjects)
 	return func() tea.Msg {
-		conn, err := a.ctx.Client.GetIssues(teamID, 50, "", filter)
+		// If filtering for "My Unlabeled Issues", we fetch more issues and filter client-side
+		// because the Linear API has issues with the `labels: { null: true }` filter natively.
+		fetchLimit := 50
+		if filterName == "My Unlabeled Issues" {
+			fetchLimit = 250
+		}
+		
+		conn, err := a.ctx.Client.GetIssues(teamID, fetchLimit, "", filter)
 		if err != nil {
 			return ErrorMsg{Err: fmt.Errorf("fetch issues: %w", err)}
 		}
+		
+		nodes := conn.Nodes
+		if filterName == "My Unlabeled Issues" {
+			var filtered []linear.Issue
+			for _, issue := range nodes {
+				if len(issue.Labels.Nodes) == 0 {
+					filtered = append(filtered, issue)
+				}
+			}
+			nodes = filtered
+		}
+		
 		return IssuesLoadedMsg{
-			Issues:   conn.Nodes,
+			Issues:   nodes,
 			PageInfo: conn.PageInfo,
 		}
 	}
@@ -604,18 +627,12 @@ func buildIssueFilter(filterName string, currentUser *linear.User, projects []li
 		return nil
 	case "My Unlabeled Issues":
 		if currentUser != nil {
+			// We only filter by assignee here. 
+			// The API has issues filtering out `labels: { null: true }` correctly 
+			// when combined in this way, so we filter labels out client-side.
 			return map[string]any{
-				"and": []map[string]any{
-					{
-						"assignee": map[string]any{
-							"id": map[string]any{"eq": currentUser.ID},
-						},
-					},
-					{
-						"labels": map[string]any{
-							"null": true,
-						},
-					},
+				"assignee": map[string]any{
+					"id": map[string]any{"eq": currentUser.ID},
 				},
 			}
 		}
@@ -746,7 +763,7 @@ func (a *App) updateStatusBarHints() {
 		a.statusBar.SetHints("j/k: navigate | enter: select | l: select & focus | c: create | v: compact | tab: issues | ?: help")
 	case PanelMain:
 		if a.mainPanel.Focused() {
-			hints := "j/k: navigate | /: filter | enter: open | c: create | e: edit | s: status | v: compact | ?: help"
+			hints := "j/k: navigate | /: filter | enter: browser | l: open | c: create | e: edit | s: status | v: compact | ?: help"
 			if a.activeFilter == "My Unlabeled Issues" {
 				hints = "T: auto-tag | " + hints
 			}
@@ -801,7 +818,8 @@ func (a App) renderHelp() string {
 			keys: []struct{ key, desc string }{
 				{"j / k", "navigate up/down"},
 				{"/", "filter issues"},
-				{"enter / l", "open issue detail"},
+				{"enter", "open in browser"},
+				{"l", "open issue detail"},
 				{"e", "edit issue"},
 				{"s", "change status"},
 				{"r", "refresh list"},
@@ -1004,5 +1022,29 @@ func (a App) autoTagIssues(issues []linear.Issue) tea.Cmd {
 		}
 
 		return RefreshIssuesMsg{}
+	}
+}
+
+// openBrowser opens the specified URL in the default web browser.
+func openBrowser(url string) tea.Cmd {
+	if url == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		var err error
+		switch runtime.GOOS {
+		case "linux":
+			err = exec.Command("xdg-open", url).Start()
+		case "windows":
+			err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		case "darwin":
+			err = exec.Command("open", url).Start()
+		default:
+			err = fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+		}
+		if err != nil {
+			return ErrorMsg{Err: fmt.Errorf("open browser: %w", err)}
+		}
+		return nil
 	}
 }

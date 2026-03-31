@@ -68,6 +68,7 @@ type Issue struct {
 	Labels      struct {
 		Nodes []Label `json:"nodes"`
 	} `json:"labels"`
+	URL       string    `json:"url"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }

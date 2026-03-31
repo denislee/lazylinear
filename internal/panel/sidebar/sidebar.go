@@ -49,8 +49,8 @@ func New() Model {
 		spinner: s,
 		filters: []string{
 			"My Issues",
-			"My Unlabeled Issues",
 			"My Issues + Active",
+			"My Unlabeled Issues",
 			"All Issues",
 			"Active",
 		},
@@ -221,6 +221,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, func() tea.Msg { return appmsg.FocusMainPanelMsg{} })
 		return m, tea.Batch(cmds...)
+
+	case "esc", "ctrl+[":
+		return m, func() tea.Msg { return appmsg.FocusMainPanelMsg{} }
 
 	case "enter":
 		return m.selectItem()

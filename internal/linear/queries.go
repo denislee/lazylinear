@@ -29,6 +29,7 @@ const issueFragment = `
 			color
 		}
 	}
+	url
 	createdAt
 	updatedAt
 `
