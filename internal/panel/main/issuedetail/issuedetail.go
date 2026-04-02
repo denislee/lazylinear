@@ -138,15 +138,25 @@ func (m Model) formatIssue() string {
 		contentWidth = 20
 	}
 
+	// Helper to pad string taking ANSI into account.
+	padRight := func(s string, width int) string {
+		w := lipgloss.Width(s)
+		if w >= width {
+			return s
+		}
+		return s + strings.Repeat(" ", width-w)
+	}
+
 	// Padding for content.
 	pad := "  "
 
 	var b strings.Builder
+	b.WriteString("\n")
 
 	// Header: identifier + title.
 	identifier := theme.SelectedStyle.Render(issue.Identifier)
-	title := theme.TitleStyle.Render(issue.Title)
-	b.WriteString(fmt.Sprintf("%s%s  %s\n", pad, identifier, title))
+	title := theme.TitleStyle.Bold(true).Render(issue.Title)
+	b.WriteString(fmt.Sprintf("%s%s  %s\n\n", pad, identifier, title))
 
 	// Separator.
 	sepWidth := contentWidth - 4
@@ -154,57 +164,79 @@ func (m Model) formatIssue() string {
 		sepWidth = 1
 	}
 	separator := theme.SubtitleStyle.Render(pad + strings.Repeat("─", sepWidth))
-	b.WriteString(separator + "\n")
+	b.WriteString(separator + "\n\n")
 
-	// Metadata rows.
+	// Metadata styles.
 	labelStyle := theme.SubtitleStyle
 	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
 
-	// Row 1: Status + Priority.
-	statusValue := theme.StatusStyle(issue.State.Type).Render(issue.State.Name)
-	priorityValue := valueStyle.Render(priorityLabel(issue.Priority))
-	b.WriteString(fmt.Sprintf("%s%s  %-16s%s  %s\n",
-		pad,
-		labelStyle.Render("Status:"),
-		statusValue,
-		labelStyle.Render("Priority:"),
-		priorityValue,
-	))
+	labelW := 12
+	valW := 24
 
-	// Row 2: Assignee + Labels.
-	assigneeName := "Unassigned"
-	if issue.Assignee != nil {
-		assigneeName = issue.Assignee.Name
-	}
-	labelsStr := "None"
-	if len(issue.Labels.Nodes) > 0 {
-		names := make([]string, len(issue.Labels.Nodes))
-		for i, l := range issue.Labels.Nodes {
-			names[i] = l.Name
+	// Row-based layout.
+	if contentWidth >= 60 {
+		// Two-column layout for larger screens.
+
+		// Row 1: Status + Priority.
+		statusValue := theme.StatusStyle(issue.State.Type).Render(issue.State.Name)
+		priorityValue := valueStyle.Render(priorityLabel(issue.Priority))
+		b.WriteString(pad + padRight(labelStyle.Render("Status:"), labelW) + padRight(statusValue, valW) +
+			padRight(labelStyle.Render("Priority:"), labelW) + priorityValue + "\n")
+
+		// Row 2: Assignee + Labels.
+		assigneeName := "Unassigned"
+		if issue.Assignee != nil {
+			assigneeName = issue.Assignee.Name
 		}
-		labelsStr = strings.Join(names, ", ")
-	}
-	b.WriteString(fmt.Sprintf("%s%s  %-16s%s  %s\n",
-		pad,
-		labelStyle.Render("Assignee:"),
-		valueStyle.Render(assigneeName),
-		labelStyle.Render("Labels:"),
-		valueStyle.Render(labelsStr),
-	))
+		labelsStr := "None"
+		if len(issue.Labels.Nodes) > 0 {
+			names := make([]string, len(issue.Labels.Nodes))
+			for i, l := range issue.Labels.Nodes {
+				names[i] = l.Name
+			}
+			labelsStr = strings.Join(names, ", ")
+		}
+		b.WriteString(pad + padRight(labelStyle.Render("Assignee:"), labelW) + padRight(valueStyle.Render(assigneeName), valW) +
+			padRight(labelStyle.Render("Labels:"), labelW) + valueStyle.Render(labelsStr) + "\n")
 
-	// Row 3: Created + Updated.
-	createdStr := issue.CreatedAt.Format("2006-01-02")
-	updatedStr := issue.UpdatedAt.Format("2006-01-02")
-	b.WriteString(fmt.Sprintf("%s%s  %-16s%s  %s\n",
-		pad,
-		labelStyle.Render("Created:"),
-		valueStyle.Render(createdStr),
-		labelStyle.Render("Updated:"),
-		valueStyle.Render(updatedStr),
-	))
+		// Row 3: Created + Updated.
+		createdStr := issue.CreatedAt.Format("2006-01-02")
+		updatedStr := issue.UpdatedAt.Format("2006-01-02")
+		b.WriteString(pad + padRight(labelStyle.Render("Created:"), labelW) + padRight(valueStyle.Render(createdStr), valW) +
+			padRight(labelStyle.Render("Updated:"), labelW) + valueStyle.Render(updatedStr) + "\n")
+	} else {
+		// Single-column layout for narrow screens.
+		b.WriteString(pad + padRight(labelStyle.Render("Status:"), labelW) +
+			theme.StatusStyle(issue.State.Type).Render(issue.State.Name) + "\n")
+		b.WriteString(pad + padRight(labelStyle.Render("Priority:"), labelW) +
+			valueStyle.Render(priorityLabel(issue.Priority)) + "\n")
+
+		assigneeName := "Unassigned"
+		if issue.Assignee != nil {
+			assigneeName = issue.Assignee.Name
+		}
+		b.WriteString(pad + padRight(labelStyle.Render("Assignee:"), labelW) +
+			valueStyle.Render(assigneeName) + "\n")
+
+		labelsStr := "None"
+		if len(issue.Labels.Nodes) > 0 {
+			names := make([]string, len(issue.Labels.Nodes))
+			for i, l := range issue.Labels.Nodes {
+				names[i] = l.Name
+			}
+			labelsStr = strings.Join(names, ", ")
+		}
+		b.WriteString(pad + padRight(labelStyle.Render("Labels:"), labelW) +
+			valueStyle.Render(labelsStr) + "\n")
+
+		b.WriteString(pad + padRight(labelStyle.Render("Created:"), labelW) +
+			valueStyle.Render(issue.CreatedAt.Format("2006-01-02")) + "\n")
+		b.WriteString(pad + padRight(labelStyle.Render("Updated:"), labelW) +
+			valueStyle.Render(issue.UpdatedAt.Format("2006-01-02")) + "\n")
+	}
 
 	// Separator.
-	b.WriteString(separator + "\n")
+	b.WriteString("\n" + separator + "\n")
 
 	// Description.
 	b.WriteString("\n")

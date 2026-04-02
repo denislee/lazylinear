@@ -399,12 +399,13 @@ func (m Model) View() tea.View {
 
 	content := b.String()
 
-	// Pad content to fill height.
-	lines := strings.Count(content, "\n")
-	for lines < innerHeight {
-		content += "\n"
-		lines++
+	// Truncate content to fit within the border's inner height so that
+	// the rendered output never exceeds the allocated panel height.
+	contentLines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	if len(contentLines) > innerHeight {
+		contentLines = contentLines[:innerHeight]
 	}
+	content = strings.Join(contentLines, "\n")
 
 	// Apply border.
 	var borderStyle lipgloss.Style
@@ -417,6 +418,7 @@ func (m Model) View() tea.View {
 	rendered := borderStyle.
 		Width(m.width).
 		Height(m.height).
+		MaxHeight(m.height).
 		Render(content)
 
 	return tea.NewView(rendered)

@@ -93,6 +93,18 @@ type AutoTagIssuesMsg struct {
 	Issues []linear.Issue
 }
 
+// AutoLabelProgressMsg is sent to show progress of auto-labeling.
+type AutoLabelProgressMsg struct {
+	Message string
+}
+
+// AutoLabelStartMsg is sent to start sequential labeling.
+type AutoLabelStartMsg struct {
+	Issues  []linear.Issue
+	LabelMap map[string]string
+	Allowed  []string
+}
+
 // RefreshIssuesMsg is sent when the issue list wants to refresh with the current filter.
 type RefreshIssuesMsg struct{}
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/denislee/lazylinear/internal/config"
 	"github.com/denislee/lazylinear/internal/linear"
+	appmsg "github.com/denislee/lazylinear/internal/msg"
 	mainpanel "github.com/denislee/lazylinear/internal/panel/main"
 	"github.com/denislee/lazylinear/internal/panel/modal"
 	"github.com/denislee/lazylinear/internal/panel/sidebar"
@@ -41,6 +42,10 @@ type App struct {
 	pendingIssue       *linear.Issue // issue awaiting workflow states for status change
 	pendingEditIssue   *linear.Issue // issue awaiting metadata for edit modal
 	pendingCreateIssue bool          // whether we are waiting for metadata to create an issue
+	autoLabelingIssues []linear.Issue
+	autoLabelingIndex  int
+	autoLabelingMap    map[string]string
+	autoLabelingAllowed []string
 }
 
 // NewApp creates a new root App model.
@@ -261,9 +266,27 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 
 	case AutoTagIssuesMsg:
+		a.statusBar.SetSuccess("Auto-labeling: Fetching metadata...")
 		return a, a.autoTagIssues(msg.Issues)
 
+	case appmsg.AutoLabelStartMsg:
+		a.autoLabelingIssues = msg.Issues
+		a.autoLabelingMap = msg.LabelMap
+		a.autoLabelingAllowed = msg.Allowed
+		a.autoLabelingIndex = 0
+		a.statusBar.SetSuccess(fmt.Sprintf("Auto-labeling [0/%d]: Preparing...", len(a.autoLabelingIssues)))
+		return a, a.processNextIssue()
+
+	case appmsg.AutoLabelProgressMsg:
+		a.statusBar.SetSuccess(msg.Message)
+		a.autoLabelingIndex++
+		if a.autoLabelingIndex >= len(a.autoLabelingIssues) {
+			return a, func() tea.Msg { return RefreshIssuesMsg{} }
+		}
+		return a, a.processNextIssue()
+
 	case RefreshIssuesMsg:
+		a.statusBar.SetSuccess("Auto-labeling complete")
 		updatedMain, cmd := a.mainPanel.Update(msg)
 		a.mainPanel = updatedMain.(mainpanel.Model)
 		if cmd != nil {
@@ -765,7 +788,7 @@ func (a *App) updateStatusBarHints() {
 		if a.mainPanel.Focused() {
 			hints := "j/k: navigate | /: filter | enter: browser | l: open | c: create | e: edit | s: status | v: compact | ?: help"
 			if a.activeFilter == "My Unlabeled Issues" {
-				hints = "T: auto-tag | " + hints
+				hints = "t: auto-label | " + hints
 			}
 			a.statusBar.SetHints(hints)
 		} else {
@@ -824,7 +847,7 @@ func (a App) renderHelp() string {
 				{"s", "change status"},
 				{"r", "refresh list"},
 				{"h", "focus sidebar"},
-				{"T", "auto-tag (unlabeled only)"},
+				{"t", "auto-label (unlabeled only)"},
 			},
 		},
 		{
@@ -961,7 +984,6 @@ func (a App) autoTagIssues(issues []linear.Issue) tea.Cmd {
 			labelMap[l.Name] = l.ID
 		}
 
-		// Ensure all allowed labels exist or skip those that don't
 		existingAllowed := []string{}
 		for _, name := range allowedLabels {
 			if _, ok := labelMap[name]; ok {
@@ -973,55 +995,64 @@ func (a App) autoTagIssues(issues []linear.Issue) tea.Cmd {
 			return ErrorMsg{Err: fmt.Errorf("none of the allowed labels exist in this team")}
 		}
 
-		// 2. Prepare prompt
-		var issuesText strings.Builder
-		for _, issue := range issues {
-			desc := issue.Description
-			if len(desc) > 300 {
-				desc = desc[:300]
-			}
-			fmt.Fprintf(&issuesText, "ID: %s\nTitle: %s\nDescription: %s\n---\n", issue.Identifier, issue.Title, desc)
+		return appmsg.AutoLabelStartMsg{
+			Issues:   issues,
+			LabelMap: labelMap,
+			Allowed:  existingAllowed,
 		}
+	}
+}
 
+func (a App) processNextIssue() tea.Cmd {
+	if a.autoLabelingIndex >= len(a.autoLabelingIssues) {
+		return func() tea.Msg { return RefreshIssuesMsg{} }
+	}
+
+	issue := a.autoLabelingIssues[a.autoLabelingIndex]
+	allowed := a.autoLabelingAllowed
+	labelMap := a.autoLabelingMap
+	total := len(a.autoLabelingIssues)
+	curr := a.autoLabelingIndex + 1
+
+	return func() tea.Msg {
+		desc := issue.Description
+		if len(desc) > 300 {
+			desc = desc[:300]
+		}
+		
 		prompt := fmt.Sprintf(
-			"Categorize the following Linear issues into EXACTLY ONE of these categories:\n%s\n\nIssues:\n%s\n\nRespond ONLY with a list of \"ID: Category\", one per line. Do not include any other text or markdown.",
-			strings.Join(existingAllowed, ", "),
-			issuesText.String(),
+			"Categorize this Linear issue into EXACTLY ONE of these categories:\n%s\n\nIssue:\nID: %s\nTitle: %s\nDescription: %s\n\nRespond ONLY with the category name. Do not include any other text.",
+			strings.Join(allowed, ", "),
+			issue.Identifier,
+			issue.Title,
+			desc,
 		)
 
-		// 3. Run gemini CLI
 		cmd := exec.Command("gemini", "-p", prompt)
-		output, err := cmd.Output()
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("run gemini cli: %w", err)}
-		}
-
-		// 4. Parse output
-		suggestions := make(map[string]string)
-		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-		for _, line := range lines {
-			if parts := strings.Split(line, ":"); len(parts) >= 2 {
-				id := strings.TrimSpace(parts[0])
-				category := strings.TrimSpace(parts[1])
-				for _, allowed := range existingAllowed {
-					if strings.Contains(strings.ToLower(category), strings.ToLower(allowed)) {
-						suggestions[id] = labelMap[allowed]
-						break
-					}
-				}
+		output, _ := cmd.Output()
+		category := strings.TrimSpace(string(output))
+		
+		var labelID string
+		var labelName string
+		for _, l := range allowed {
+			if strings.Contains(strings.ToLower(category), strings.ToLower(l)) {
+				labelID = labelMap[l]
+				labelName = l
+				break
 			}
 		}
 
-		// 5. Update issues
-		for _, issue := range issues {
-			if labelID, ok := suggestions[issue.Identifier]; ok {
-				if err := a.ctx.Client.UpdateIssueLabels(issue.ID, []string{labelID}); err != nil {
-					// continue on error
+		if labelID != "" {
+			if err := a.ctx.Client.UpdateIssueLabels(issue.ID, []string{labelID}); err == nil {
+				return appmsg.AutoLabelProgressMsg{
+					Message: fmt.Sprintf("[%d/%d] Request: %s -> Response: %s", curr, total, issue.Identifier, labelName),
 				}
 			}
 		}
-
-		return RefreshIssuesMsg{}
+		
+		return appmsg.AutoLabelProgressMsg{
+			Message: fmt.Sprintf("[%d/%d] Skipped %s (unknown category: %s)", curr, total, issue.Identifier, category),
+		}
 	}
 }
 

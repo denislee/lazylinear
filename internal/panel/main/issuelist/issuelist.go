@@ -4,6 +4,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/denislee/lazylinear/internal/linear"
 	appmsg "github.com/denislee/lazylinear/internal/msg"
@@ -11,11 +12,14 @@ import (
 
 // Model wraps a bubbles list.Model to display issues.
 type Model struct {
-	list     list.Model
-	teamID   string
-	pageInfo linear.PageInfo
-	focused  bool
-	compact  bool
+	list       list.Model
+	teamID     string
+	filterName string
+	pageInfo   linear.PageInfo
+	focused    bool
+	compact    bool
+	width      int
+	height     int
 }
 
 // New creates a new issue list model.
@@ -67,7 +71,17 @@ func New() Model {
 
 // SetSize updates the list dimensions.
 func (m *Model) SetSize(width, height int) {
-	m.list.SetSize(width, height)
+	m.width = width
+	m.height = height
+
+	listHeight := height
+	if m.filterName == "My Unlabeled Issues" {
+		listHeight -= 3
+	}
+	if listHeight < 1 {
+		listHeight = 1
+	}
+	m.list.SetSize(width, listHeight)
 }
 
 // SetFocused sets the focus state.
@@ -112,7 +126,10 @@ func (m *Model) SetTeamID(teamID string) {
 
 // SetFilterName updates the displayed title of the list.
 func (m *Model) SetFilterName(name string) {
+	m.filterName = name
 	m.list.Title = "Issues - " + name
+	// Re-size to account for the auto-label button if needed.
+	m.SetSize(m.width, m.height)
 }
 
 // TeamID returns the current team ID.
@@ -178,16 +195,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "T":
-			// Extract all issues from the list.
-			var issues []linear.Issue
-			for _, item := range m.list.Items() {
-				if issueItem, ok := item.(IssueItem); ok {
-					issues = append(issues, issueItem.Issue)
+		case "t", "T":
+			if m.filterName == "My Unlabeled Issues" {
+				// Extract all issues from the list.
+				var issues []linear.Issue
+				for _, item := range m.list.Items() {
+					if issueItem, ok := item.(IssueItem); ok {
+						issues = append(issues, issueItem.Issue)
+					}
 				}
-			}
-			return m, func() tea.Msg {
-				return appmsg.AutoTagIssuesMsg{Issues: issues}
+				return m, func() tea.Msg {
+					return appmsg.AutoTagIssuesMsg{Issues: issues}
+				}
 			}
 
 		case "r":
@@ -210,5 +229,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 // View renders the issue list.
 func (m Model) View() string {
+	if m.filterName == "My Unlabeled Issues" && len(m.list.Items()) > 0 {
+		buttonStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(lipgloss.Color("#7D56F4")).
+			Padding(0, 1).
+			Bold(true)
+		
+		button := buttonStyle.Render("[t] Auto-Label with Gemini")
+		return button + "\n\n" + m.list.View()
+	}
 	return m.list.View()
 }

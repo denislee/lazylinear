@@ -17,7 +17,7 @@ func ComputeLayout(width, height int) Layout {
 	// Main panel takes the rest of the available width.
 	mainWidth := max(10, width-sidebarWidth)
 
-	// Reserve space for status bar (1 line). The panels handle their own borders internally.
+	// Reserve space for status bar (1 line).
 	contentHeight := max(3, height-1)
 
 	return Layout{

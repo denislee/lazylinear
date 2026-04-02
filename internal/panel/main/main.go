@@ -234,6 +234,7 @@ func (m Model) View() tea.View {
 	rendered := borderStyle.
 		Width(m.width).
 		Height(m.height).
+		MaxHeight(m.height).
 		Render(content)
 
 	return tea.NewView(rendered)
