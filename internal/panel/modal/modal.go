@@ -21,6 +21,8 @@ const (
 	CreateIssue
 	// EditIssue is the issue edit form modal.
 	EditIssue
+	// IssueSearch is the fuzzy search modal.
+	IssueSearch
 )
 
 // Model is the modal manager. It holds the active modal state and routes
@@ -30,6 +32,7 @@ type Model struct {
 	statusChange StatusChangeModel
 	createIssue  CreateIssueModel
 	editIssue    EditIssueModel
+	issueSearch  IssueSearchModel
 	width        int
 	height       int
 }
@@ -76,6 +79,12 @@ func (m *Model) OpenEditIssue(issue linear.Issue, currentUser *linear.User, meta
 	m.modalType = EditIssue
 }
 
+// OpenIssueSearch opens the issue search modal.
+func (m *Model) OpenIssueSearch(issues []linear.Issue) {
+	m.issueSearch = NewIssueSearch(issues, m.width, m.height)
+	m.modalType = IssueSearch
+}
+
 // Close closes the active modal.
 func (m *Model) Close() {
 	m.modalType = None
@@ -96,6 +105,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.editIssue, cmd = m.editIssue.Update(msg)
 		return m, cmd
+	case IssueSearch:
+		var cmd tea.Cmd
+		m.issueSearch, cmd = m.issueSearch.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -114,11 +127,14 @@ func (m Model) View() string {
 		content = m.createIssue.View()
 	case EditIssue:
 		content = m.editIssue.View()
+	case IssueSearch:
+		content = m.issueSearch.View()
 	}
 
 	// Wrap in modal style.
 	modalContent := theme.ModalStyle.Render(content)
 
 	// Center on screen.
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalContent)
+	res := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalContent)
+	return res
 }

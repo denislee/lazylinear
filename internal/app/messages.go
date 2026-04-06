@@ -18,6 +18,8 @@ type (
 	OpenCreateIssueMsg      = msg.OpenCreateIssueMsg
 	OpenEditIssueMsg        = msg.OpenEditIssueMsg
 	OpenStatusChangeMsg     = msg.OpenStatusChangeMsg
+	OpenIssueSearchMsg      = msg.OpenIssueSearchMsg
+	MyIssuesLoadedMsg       = msg.MyIssuesLoadedMsg
 	ModalClosedMsg          = msg.ModalClosedMsg
 	IssueEditConfirmedMsg   = msg.IssueEditConfirmedMsg
 	IssueCreatedMsg         = msg.IssueCreatedMsg

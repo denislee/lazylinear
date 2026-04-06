@@ -20,4 +20,5 @@ const (
 	KeyC            = "c"
 	KeyE            = "e"
 	KeyS            = "s"
+	KeyCtrlK        = "ctrl+k"
 )

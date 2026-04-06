@@ -15,8 +15,9 @@ type TeamsLoadedMsg struct {
 
 // IssuesLoadedMsg is sent when issues have been fetched from the API.
 type IssuesLoadedMsg struct {
-	Issues   []linear.Issue
-	PageInfo linear.PageInfo
+	Issues     []linear.Issue
+	PageInfo   linear.PageInfo
+	FilterName string
 }
 
 // WorkflowStatesLoadedMsg is sent when workflow states have been fetched.
@@ -58,6 +59,14 @@ type OpenEditIssueMsg struct {
 // OpenStatusChangeMsg is sent to open the status change modal.
 type OpenStatusChangeMsg struct {
 	Issue linear.Issue
+}
+
+// OpenIssueSearchMsg is sent to open the issue search modal.
+type OpenIssueSearchMsg struct{}
+
+// MyIssuesLoadedMsg is sent when my issues have been fetched for search.
+type MyIssuesLoadedMsg struct {
+	Issues []linear.Issue
 }
 
 // ModalClosedMsg is sent when a modal is closed.

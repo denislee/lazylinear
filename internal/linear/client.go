@@ -138,6 +138,27 @@ func (c *Client) GetIssues(teamID string, first int, after string, filter map[st
 	return &resp.Team.Issues, nil
 }
 
+// GetMyIssues returns a paginated list of issues globally using a filter.
+func (c *Client) GetMyIssues(first int, after string, filter map[string]any) (*IssueConnection, error) {
+	vars := map[string]any{
+		"first": first,
+	}
+	if after != "" {
+		vars["after"] = after
+	}
+	if filter != nil {
+		vars["filter"] = filter
+	}
+
+	var resp struct {
+		Issues IssueConnection `json:"issues"`
+	}
+	if err := c.execute(queryMyIssues, vars, &resp); err != nil {
+		return nil, err
+	}
+	return &resp.Issues, nil
+}
+
 // GetIssue returns a single issue by ID.
 func (c *Client) GetIssue(id string) (*Issue, error) {
 	vars := map[string]any{
@@ -315,9 +336,23 @@ func (c *Client) GetFilterCounts(teamID string, filters map[string]map[string]an
 		aliasToName[alias] = name
 		varName := fmt.Sprintf("$filter%d", i)
 		varDefs = append(varDefs, fmt.Sprintf("%s: IssueFilter", varName))
-		// We fetch labels here because server-side filtering for 'My Unlabeled Issues' is broken in Linear's GraphQL API.
-		aliases = append(aliases, fmt.Sprintf("%s: issues(first: 250, filter: %s) { nodes { id labels { nodes { id } } } }", alias, varName))
-		vars[fmt.Sprintf("filter%d", i)] = filter
+		
+		f := filter
+		if name == "My Unlabeled Issues" {
+			// Deep copy filter and add labels null check.
+			newFilter := make(map[string]any)
+			for k, v := range filter {
+				newFilter[k] = v
+			}
+			newFilter["labels"] = map[string]any{"null": true}
+			f = newFilter
+		}
+		
+		// We fetch nodes to count them. 
+		// Some connections in Linear's GraphQL API (like the one under team) 
+		// might not support totalCount depending on the API version/state.
+		aliases = append(aliases, fmt.Sprintf("%s: issues(first: 250, filter: %s) { nodes { id } }", alias, varName))
+		vars[fmt.Sprintf("filter%d", i)] = f
 		i++
 	}
 
@@ -340,29 +375,13 @@ func (c *Client) GetFilterCounts(teamID string, filters map[string]map[string]an
 		}
 		var conn struct {
 			Nodes []struct {
-				ID     string `json:"id"`
-				Labels struct {
-					Nodes []struct {
-						ID string `json:"id"`
-					} `json:"nodes"`
-				} `json:"labels"`
+				ID string `json:"id"`
 			} `json:"nodes"`
 		}
 		if err := json.Unmarshal(raw, &conn); err != nil {
 			continue
 		}
-		
-		count := 0
-		if name == "My Unlabeled Issues" {
-			for _, n := range conn.Nodes {
-				if len(n.Labels.Nodes) == 0 {
-					count++
-				}
-			}
-		} else {
-			count = len(conn.Nodes)
-		}
-		counts[name] = count
+		counts[name] = len(conn.Nodes)
 	}
 
 	return counts, nil

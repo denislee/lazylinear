@@ -65,6 +65,17 @@ const queryIssues = `query($teamId: String!, $first: Int!, $after: String, $filt
 	}
 }`
 
+const queryMyIssues = `query($first: Int!, $after: String, $filter: IssueFilter) {
+	issues(first: $first, after: $after, filter: $filter) {
+		nodes {` + issueFragment + `
+		}
+		pageInfo {
+			hasNextPage
+			endCursor
+		}
+	}
+}`
+
 const queryIssue = `query($id: String!) {
 	issue(id: $id) {` + issueFragment + `
 	}

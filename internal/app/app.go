@@ -128,7 +128,23 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.updateStatusBarHints()
 		}
 		a.ready = true
-		return a, nil
+		
+		// Forward resize to modal as well, so internal components can update
+		if a.modal.Active() {
+			var cmd tea.Cmd
+			a.modal, cmd = a.modal.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		
+		// Let the fallback handle the rest of the message so the background updates
+		updatedMain, mainCmd := a.mainPanel.Update(msg)
+		a.mainPanel = updatedMain.(mainpanel.Model)
+		if mainCmd != nil {
+			cmds = append(cmds, mainCmd)
+		}
+		return a, tea.Batch(cmds...)
 
 	case tea.KeyPressMsg:
 		// Always allow ctrl+c to quit.
@@ -184,6 +200,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !a.mainPanel.IsFiltering() {
 				a.mainPanel.ToggleCompact()
 				return a, nil
+			}
+			return a.routeKeyToFocused(msg)
+		case KeyCtrlK:
+			if !a.mainPanel.IsFiltering() {
+				return a, func() tea.Msg {
+					return OpenIssueSearchMsg{}
+				}
 			}
 			return a.routeKeyToFocused(msg)
 		default:
@@ -257,13 +280,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case IssuesLoadedMsg:
+		// Only apply the message if it corresponds to the currently active filter.
+		// This prevents issues from a previously selected filter from overwriting 
+		// the results of a more recent selection due to race conditions.
+		if msg.FilterName != a.activeFilter {
+			return a, nil
+		}
 		// Forward to main panel.
 		updatedMain, cmd := a.mainPanel.Update(msg)
 		a.mainPanel = updatedMain.(mainpanel.Model)
-		if cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		return a, tea.Batch(cmds...)
+		return a, cmd
 
 	case AutoTagIssuesMsg:
 		a.statusBar.SetSuccess("Auto-labeling: Fetching metadata...")
@@ -321,6 +347,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, a.fetchWorkflowStates(a.ctx.CurrentTeam.ID))
 		}
 		return a, tea.Batch(cmds...)
+
+	case OpenIssueSearchMsg:
+		a.statusBar.SetSuccess("Fetching my issues...")
+		return a, a.fetchMyIssues()
+
+	case MyIssuesLoadedMsg:
+		a.statusBar.ClearSuccess()
+		a.modal.OpenIssueSearch(msg.Issues)
+		return a, nil
+
+	case modal.IssueSearchConfirmedMsg:
+		a.modal.Close()
+		// Navigate to the selected issue.
+		// Since we might be in a different team than the issue, we might need to switch team.
+		// For now, let's just select the issue in the current panel.
+		// Actually, if we are in search, we want to see it.
+		return a, func() tea.Msg {
+			return IssueSelectedMsg{Issue: msg.Issue}
+		}
 
 	case WorkflowStatesLoadedMsg:
 		// Open the status change modal with the fetched states.
@@ -477,6 +522,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 	}
 
+	// When a modal is active, forward unhandled messages (including cursor
+	// blink ticks) to it so internal components keep working.
+	if a.modal.Active() {
+		var cmd tea.Cmd
+		a.modal, cmd = a.modal.Update(msg)
+		return a, cmd
+	}
+
 	// Forward unhandled messages to the main panel so internal messages
 	// like list.FilterMatchesMsg reach the list component.
 	updatedMain, cmd := a.mainPanel.Update(msg)
@@ -583,36 +636,45 @@ func (a App) fetchTeams() tea.Cmd {
 	}
 }
 
+// fetchMyIssues returns a command that fetches all issues assigned to the current user.
+func (a App) fetchMyIssues() tea.Cmd {
+	if a.ctx.CurrentUser == nil {
+		return func() tea.Msg {
+			return ErrorMsg{Err: fmt.Errorf("not logged in")}
+		}
+	}
+
+	filter := map[string]any{
+		"assignee": map[string]any{
+			"id": map[string]any{"eq": a.ctx.CurrentUser.ID},
+		},
+		"state": map[string]any{
+			"type": map[string]any{"neq": "completed"},
+		},
+	}
+
+	return func() tea.Msg {
+		conn, err := a.ctx.Client.GetMyIssues(250, "", filter)
+		if err != nil {
+			return ErrorMsg{Err: fmt.Errorf("fetch my issues: %w", err)}
+		}
+		return MyIssuesLoadedMsg{Issues: conn.Nodes}
+	}
+}
+
 // fetchIssues returns a command that fetches issues for the given team with an optional status filter.
 func (a App) fetchIssues(teamID string, filterName string) tea.Cmd {
 	filter := buildIssueFilter(filterName, a.ctx.CurrentUser, a.ctx.CurrentProjects)
 	return func() tea.Msg {
-		// If filtering for "My Unlabeled Issues", we fetch more issues and filter client-side
-		// because the Linear API has issues with the `labels: { null: true }` filter natively.
-		fetchLimit := 50
-		if filterName == "My Unlabeled Issues" {
-			fetchLimit = 250
-		}
-		
-		conn, err := a.ctx.Client.GetIssues(teamID, fetchLimit, "", filter)
+		conn, err := a.ctx.Client.GetIssues(teamID, 50, "", filter)
 		if err != nil {
 			return ErrorMsg{Err: fmt.Errorf("fetch issues: %w", err)}
 		}
 		
-		nodes := conn.Nodes
-		if filterName == "My Unlabeled Issues" {
-			var filtered []linear.Issue
-			for _, issue := range nodes {
-				if len(issue.Labels.Nodes) == 0 {
-					filtered = append(filtered, issue)
-				}
-			}
-			nodes = filtered
-		}
-		
 		return IssuesLoadedMsg{
-			Issues:   nodes,
-			PageInfo: conn.PageInfo,
+			Issues:     conn.Nodes,
+			PageInfo:   conn.PageInfo,
+			FilterName: filterName,
 		}
 	}
 }
@@ -650,12 +712,12 @@ func buildIssueFilter(filterName string, currentUser *linear.User, projects []li
 		return nil
 	case "My Unlabeled Issues":
 		if currentUser != nil {
-			// We only filter by assignee here. 
-			// The API has issues filtering out `labels: { null: true }` correctly 
-			// when combined in this way, so we filter labels out client-side.
 			return map[string]any{
 				"assignee": map[string]any{
 					"id": map[string]any{"eq": currentUser.ID},
+				},
+				"labels": map[string]any{
+					"null": true,
 				},
 			}
 		}
@@ -783,10 +845,10 @@ func (a *App) updateStatusBarHints() {
 	}
 	switch a.focus {
 	case PanelSidebar:
-		a.statusBar.SetHints("j/k: navigate | enter: select | l: select & focus | c: create | v: compact | tab: issues | ?: help")
+		a.statusBar.SetHints("j/k: navigate | enter: select | l: select & focus | c: create | ctrl+k: search | tab: issues | ?: help")
 	case PanelMain:
 		if a.mainPanel.Focused() {
-			hints := "j/k: navigate | /: filter | enter: browser | l: open | c: create | e: edit | s: status | v: compact | ?: help"
+			hints := "j/k: navigate | /: filter | enter: browser | l: open | c: create | ctrl+k: search | ?: help"
 			if a.activeFilter == "My Unlabeled Issues" {
 				hints = "t: auto-label | " + hints
 			}
@@ -824,6 +886,7 @@ func (a App) renderHelp() string {
 				{"q", "quit"},
 				{"tab / shift+tab", "switch panel"},
 				{"c", "create new issue"},
+				{"ctrl+k", "search my issues"},
 				{"v", "toggle compact view"},
 				{"?", "toggle help"},
 			},
