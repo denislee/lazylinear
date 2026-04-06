@@ -46,7 +46,7 @@ func NewStatusChange(issue linear.Issue, states []linear.WorkflowState) StatusCh
 }
 
 // Update handles input for the status change modal.
-func (m StatusChangeModel) Update(msg tea.Msg) (StatusChangeModel, tea.Cmd) {
+func (m StatusChangeModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {

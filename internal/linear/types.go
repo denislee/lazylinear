@@ -24,17 +24,17 @@ type Project struct {
 
 // Cycle represents a Linear cycle.
 type Cycle struct {
-	ID          string    `json:"id"`
-	Number      int       `json:"number"`
-	Name        string    `json:"name"`
-	StartsAt    time.Time `json:"startsAt"`
-	EndsAt      time.Time `json:"endsAt"`
+	ID          string     `json:"id"`
+	Number      int        `json:"number"`
+	Name        string     `json:"name"`
+	StartsAt    time.Time  `json:"startsAt"`
+	EndsAt      time.Time  `json:"endsAt"`
 	CompletedAt *time.Time `json:"completedAt"`
 }
 
 // Team represents a Linear team.
 type Team struct {
-	ID  string `json:"id"`
+	ID   string `json:"id"`
 	Name string `json:"name"`
 	Key  string `json:"key"`
 }

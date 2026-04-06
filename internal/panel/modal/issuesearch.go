@@ -25,8 +25,8 @@ type SearchItem struct {
 	Issue linear.Issue
 }
 
-func (i SearchItem) Title() string       { return i.Issue.Identifier + " " + i.Issue.Title }
-func (i SearchItem) Description() string { 
+func (i SearchItem) Title() string { return i.Issue.Identifier + " " + i.Issue.Title }
+func (i SearchItem) Description() string {
 	if i.Issue.Assignee != nil {
 		return i.Issue.State.Name + " · " + i.Issue.Assignee.Name
 	}
@@ -94,7 +94,7 @@ type IssueSearchConfirmedMsg struct {
 }
 
 // Update handles messages for the search modal.
-func (m IssueSearchModel) Update(msg tea.Msg) (IssueSearchModel, tea.Cmd) {
+func (m IssueSearchModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {

@@ -109,24 +109,24 @@ func (d *IssueDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	if d.Compact {
 		statusStyle := theme.StatusStyle(issue.Issue.State.Type)
 		statusBadge := statusStyle.Render("●")
-		
+
 		age := formatAge(issue.Issue.CreatedAt)
 		ageStr := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#666")).
 			Render(age)
-			
+
 		// Calculate available width for title
 		// badge + space + cursor (2) + spaces (2) + age
 		availableWidth := textWidth - lipgloss.Width(statusBadge) - lipgloss.Width(ageStr) - 5
 		if availableWidth < 10 {
 			availableWidth = 10
 		}
-		
+
 		titleLine := identifier + "  " + title
 		titleLine = ansi.Truncate(titleLine, availableWidth, "...")
-		
+
 		titleLine = statusBadge + " " + titleLine + "  " + ageStr
-		
+
 		if isSelected {
 			cursor := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#7D56F4")).
@@ -135,7 +135,7 @@ func (d *IssueDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 		} else {
 			titleLine = "  " + titleLine
 		}
-		
+
 		fmt.Fprintf(w, "%s", titleLine) //nolint:errcheck
 		return
 	}
@@ -148,14 +148,14 @@ func (d *IssueDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	if issue.Issue.Assignee != nil {
 		assignee = issue.Issue.Assignee.Name
 	}
-	
+
 	projectStr := ""
 	if issue.Issue.Project != nil {
 		projectStr = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#A885FF")).
 			Render(issue.Issue.Project.Name) + "  "
 	}
-	
+
 	age := formatAge(issue.Issue.CreatedAt)
 	ageStr := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#666")).

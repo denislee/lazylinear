@@ -116,7 +116,7 @@ func (m *CreateIssueModel) SetMetadata(meta *linear.TeamMetadata) {
 	}
 }
 
-func (m CreateIssueModel) Update(msg tea.Msg) (CreateIssueModel, tea.Cmd) {
+func (m CreateIssueModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -264,7 +264,7 @@ func (m CreateIssueModel) submit() (CreateIssueModel, tea.Cmd) {
 	}
 
 	desc := strings.TrimSpace(m.descInput.Value())
-	
+
 	var stateID *string
 	if m.statusCursor > 0 {
 		id := m.states[m.statusCursor-1].ID

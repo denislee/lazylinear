@@ -9,44 +9,28 @@ import (
 	"github.com/denislee/lazylinear/internal/theme"
 )
 
-// ModalType identifies which modal is currently active.
-type ModalType int
-
-const (
-	// None means no modal is active.
-	None ModalType = iota
-	// StatusChange is the status picker modal.
-	StatusChange
-	// CreateIssue is the issue creation form modal.
-	CreateIssue
-	// EditIssue is the issue edit form modal.
-	EditIssue
-	// IssueSearch is the fuzzy search modal.
-	IssueSearch
-)
+// SubModal defines the interface for sub-modals managed by Model.
+type SubModal interface {
+	Update(msg tea.Msg) (SubModal, tea.Cmd)
+	View() string
+}
 
 // Model is the modal manager. It holds the active modal state and routes
 // input and rendering to the appropriate sub-modal.
 type Model struct {
-	modalType    ModalType
-	statusChange StatusChangeModel
-	createIssue  CreateIssueModel
-	editIssue    EditIssueModel
-	issueSearch  IssueSearchModel
-	width        int
-	height       int
+	activeModal SubModal
+	width       int
+	height      int
 }
 
 // New creates a new modal manager with no active modal.
 func New() Model {
-	return Model{
-		modalType: None,
-	}
+	return Model{}
 }
 
 // Active returns true if a modal is currently open.
 func (m Model) Active() bool {
-	return m.modalType != None
+	return m.activeModal != nil
 }
 
 // SetSize stores the terminal dimensions for centering the overlay.
@@ -57,57 +41,43 @@ func (m *Model) SetSize(width, height int) {
 
 // OpenStatusChange opens the status change modal for the given issue and states.
 func (m *Model) OpenStatusChange(issue linear.Issue, states []linear.WorkflowState) {
-	m.statusChange = NewStatusChange(issue, states)
-	m.modalType = StatusChange
+	m.activeModal = NewStatusChange(issue, states)
 }
 
 // OpenCreateIssue opens the create issue modal for the given team.
 // Lists are initially empty; call SetCreateIssueMetadata to populate them.
 func (m *Model) OpenCreateIssue(teamID string, currentUser *linear.User) {
-	m.createIssue = NewCreateIssue(teamID, currentUser)
-	m.modalType = CreateIssue
+	m.activeModal = NewCreateIssue(teamID, currentUser)
 }
 
 // SetCreateIssueMetadata populates the assignee/project/cycle lists on the active create issue modal.
 func (m *Model) SetCreateIssueMetadata(meta *linear.TeamMetadata) {
-	m.createIssue.SetMetadata(meta)
+	if ci, ok := m.activeModal.(CreateIssueModel); ok {
+		ci.SetMetadata(meta)
+		m.activeModal = ci
+	}
 }
 
 // OpenEditIssue opens the edit issue modal for the given issue.
 func (m *Model) OpenEditIssue(issue linear.Issue, currentUser *linear.User, meta *linear.TeamMetadata) {
-	m.editIssue = NewEditIssue(issue, currentUser, meta)
-	m.modalType = EditIssue
+	m.activeModal = NewEditIssue(issue, currentUser, meta)
 }
 
 // OpenIssueSearch opens the issue search modal.
 func (m *Model) OpenIssueSearch(issues []linear.Issue) {
-	m.issueSearch = NewIssueSearch(issues, m.width, m.height)
-	m.modalType = IssueSearch
+	m.activeModal = NewIssueSearch(issues, m.width, m.height)
 }
 
 // Close closes the active modal.
 func (m *Model) Close() {
-	m.modalType = None
+	m.activeModal = nil
 }
 
 // Update routes messages to the active modal.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	switch m.modalType {
-	case StatusChange:
+	if m.activeModal != nil {
 		var cmd tea.Cmd
-		m.statusChange, cmd = m.statusChange.Update(msg)
-		return m, cmd
-	case CreateIssue:
-		var cmd tea.Cmd
-		m.createIssue, cmd = m.createIssue.Update(msg)
-		return m, cmd
-	case EditIssue:
-		var cmd tea.Cmd
-		m.editIssue, cmd = m.editIssue.Update(msg)
-		return m, cmd
-	case IssueSearch:
-		var cmd tea.Cmd
-		m.issueSearch, cmd = m.issueSearch.Update(msg)
+		m.activeModal, cmd = m.activeModal.Update(msg)
 		return m, cmd
 	}
 	return m, nil
@@ -115,21 +85,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 // View renders the active modal wrapped in the modal style and centered on screen.
 func (m Model) View() string {
-	if m.modalType == None {
+	if m.activeModal == nil {
 		return ""
 	}
 
-	var content string
-	switch m.modalType {
-	case StatusChange:
-		content = m.statusChange.View()
-	case CreateIssue:
-		content = m.createIssue.View()
-	case EditIssue:
-		content = m.editIssue.View()
-	case IssueSearch:
-		content = m.issueSearch.View()
-	}
+	content := m.activeModal.View()
 
 	// Wrap in modal style.
 	modalContent := theme.ModalStyle.Render(content)

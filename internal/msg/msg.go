@@ -109,7 +109,7 @@ type AutoLabelProgressMsg struct {
 
 // AutoLabelStartMsg is sent to start sequential labeling.
 type AutoLabelStartMsg struct {
-	Issues  []linear.Issue
+	Issues   []linear.Issue
 	LabelMap map[string]string
 	Allowed  []string
 }

@@ -2,8 +2,6 @@ package app
 
 import (
 	"fmt"
-	"os/exec"
-	"runtime"
 	"strings"
 
 	"charm.land/bubbles/v2/spinner"
@@ -29,22 +27,22 @@ const (
 
 // App is the root Bubble Tea model.
 type App struct {
-	ctx                *AppContext
-	sidebar            sidebar.Model
-	mainPanel          mainpanel.Model
-	statusBar          statusbar.Model
-	modal              modal.Model
-	layout             Layout
-	focus              PanelID
-	ready              bool
-	showHelp           bool
-	activeFilter       string        // current filter: "My Issues", "All Issues", "Active"
-	pendingIssue       *linear.Issue // issue awaiting workflow states for status change
-	pendingEditIssue   *linear.Issue // issue awaiting metadata for edit modal
-	pendingCreateIssue bool          // whether we are waiting for metadata to create an issue
-	autoLabelingIssues []linear.Issue
-	autoLabelingIndex  int
-	autoLabelingMap    map[string]string
+	ctx                 *AppContext
+	sidebar             sidebar.Model
+	mainPanel           mainpanel.Model
+	statusBar           statusbar.Model
+	modal               modal.Model
+	layout              Layout
+	focus               PanelID
+	ready               bool
+	showHelp            bool
+	activeFilter        string        // current filter: "My Issues", "All Issues", "Active"
+	pendingIssue        *linear.Issue // issue awaiting workflow states for status change
+	pendingEditIssue    *linear.Issue // issue awaiting metadata for edit modal
+	pendingCreateIssue  bool          // whether we are waiting for metadata to create an issue
+	autoLabelingIssues  []linear.Issue
+	autoLabelingIndex   int
+	autoLabelingMap     map[string]string
 	autoLabelingAllowed []string
 }
 
@@ -88,8 +86,8 @@ func NewApp(client *linear.Client, state *config.State) App {
 func (a App) Init() tea.Cmd {
 	return tea.Batch(
 		a.sidebar.Init(),
-		a.fetchViewer(),
-		a.fetchTeams(),
+		fetchViewer(a.ctx),
+		fetchTeams(a.ctx),
 	)
 }
 
@@ -113,107 +111,121 @@ func (a App) IsCompact() bool {
 
 // Update implements tea.Model.
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		return a.handleWindowSizeMsg(msg)
+	case tea.KeyPressMsg:
+		return a.handleKeyPressMsg(msg)
+	default:
+		return a.handleCustomMsg(msg)
+	}
+}
+
+func (a App) handleWindowSizeMsg(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	a.ctx.Width = msg.Width
+	a.ctx.Height = msg.Height
+	a.layout = ComputeLayout(msg.Width, msg.Height)
+	a.sidebar.SetSize(a.layout.SidebarWidth, a.layout.ContentHeight)
+	a.mainPanel.SetSize(a.layout.MainWidth, a.layout.ContentHeight)
+	a.statusBar.SetSize(msg.Width)
+	a.modal.SetSize(msg.Width, msg.Height)
+	if !a.ready {
+		a.updateStatusBarHints()
+	}
+	a.ready = true
+
+	// Forward resize to modal as well, so internal components can update
+	if a.modal.Active() {
+		var cmd tea.Cmd
+		a.modal, cmd = a.modal.Update(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+
+	// Let the fallback handle the rest of the message so the background updates
+	updatedMain, mainCmd := a.mainPanel.Update(msg)
+	a.mainPanel = updatedMain.(mainpanel.Model)
+	if mainCmd != nil {
+		cmds = append(cmds, mainCmd)
+	}
+	return a, tea.Batch(cmds...)
+}
+
+func (a App) handleKeyPressMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Always allow ctrl+c to quit.
+	if msg.String() == KeyCtrlC {
+		return a, tea.Quit
+	}
+
+	// If help overlay is shown, any key closes it.
+	if a.showHelp {
+		a.showHelp = false
+		return a, nil
+	}
+
+	// When a modal is active, route all keys to it.
+	if a.modal.Active() {
+		var cmd tea.Cmd
+		a.modal, cmd = a.modal.Update(msg)
+		return a, cmd
+	}
+
+	switch msg.String() {
+	case KeyQuit:
+		// Don't quit if the main panel is filtering (user is typing).
+		if a.focus == PanelMain && a.mainPanel.IsFiltering() {
+			return a.routeKeyToFocused(msg)
+		}
+		return a, tea.Quit
+	case KeyQuestionMark:
+		// Don't open help if main panel is filtering (user is typing).
+		if a.focus == PanelMain && a.mainPanel.IsFiltering() {
+			return a.routeKeyToFocused(msg)
+		}
+		a.showHelp = true
+		return a, nil
+	case KeyTab:
+		a.cycleFocus(1)
+		a.updateStatusBarHints()
+		return a, nil
+	case KeyShiftTab:
+		a.cycleFocus(-1)
+		a.updateStatusBarHints()
+		return a, nil
+	case "c":
+		// Open create issue globally, even if sidebar is focused
+		if !a.mainPanel.IsFiltering() {
+			return a, func() tea.Msg {
+				return OpenCreateIssueMsg{}
+			}
+		}
+		return a.routeKeyToFocused(msg)
+	case "v":
+		// Toggle compact mode globally, even if sidebar is focused
+		if !a.mainPanel.IsFiltering() {
+			a.mainPanel.ToggleCompact()
+			return a, nil
+		}
+		return a.routeKeyToFocused(msg)
+	case KeyCtrlK:
+		if !a.mainPanel.IsFiltering() {
+			return a, func() tea.Msg {
+				return OpenIssueSearchMsg{}
+			}
+		}
+		return a.routeKeyToFocused(msg)
+	default:
+		// Route to focused panel.
+		return a.routeKeyToFocused(msg)
+	}
+}
+
+func (a App) handleCustomMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		a.ctx.Width = msg.Width
-		a.ctx.Height = msg.Height
-		a.layout = ComputeLayout(msg.Width, msg.Height)
-		a.sidebar.SetSize(a.layout.SidebarWidth, a.layout.ContentHeight)
-		a.mainPanel.SetSize(a.layout.MainWidth, a.layout.ContentHeight)
-		a.statusBar.SetSize(msg.Width)
-		a.modal.SetSize(msg.Width, msg.Height)
-		if !a.ready {
-			a.updateStatusBarHints()
-		}
-		a.ready = true
-		
-		// Forward resize to modal as well, so internal components can update
-		if a.modal.Active() {
-			var cmd tea.Cmd
-			a.modal, cmd = a.modal.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-		
-		// Let the fallback handle the rest of the message so the background updates
-		updatedMain, mainCmd := a.mainPanel.Update(msg)
-		a.mainPanel = updatedMain.(mainpanel.Model)
-		if mainCmd != nil {
-			cmds = append(cmds, mainCmd)
-		}
-		return a, tea.Batch(cmds...)
-
-	case tea.KeyPressMsg:
-		// Always allow ctrl+c to quit.
-		if msg.String() == KeyCtrlC {
-			return a, tea.Quit
-		}
-
-		// If help overlay is shown, any key closes it.
-		if a.showHelp {
-			a.showHelp = false
-			return a, nil
-		}
-
-		// When a modal is active, route all keys to it.
-		if a.modal.Active() {
-			var cmd tea.Cmd
-			a.modal, cmd = a.modal.Update(msg)
-			return a, cmd
-		}
-
-		switch msg.String() {
-		case KeyQuit:
-			// Don't quit if the main panel is filtering (user is typing).
-			if a.focus == PanelMain && a.mainPanel.IsFiltering() {
-				return a.routeKeyToFocused(msg)
-			}
-			return a, tea.Quit
-		case KeyQuestionMark:
-			// Don't open help if main panel is filtering (user is typing).
-			if a.focus == PanelMain && a.mainPanel.IsFiltering() {
-				return a.routeKeyToFocused(msg)
-			}
-			a.showHelp = true
-			return a, nil
-		case KeyTab:
-			a.cycleFocus(1)
-			a.updateStatusBarHints()
-			return a, nil
-		case KeyShiftTab:
-			a.cycleFocus(-1)
-			a.updateStatusBarHints()
-			return a, nil
-		case "c":
-			// Open create issue globally, even if sidebar is focused
-			if !a.mainPanel.IsFiltering() {
-				return a, func() tea.Msg {
-					return OpenCreateIssueMsg{}
-				}
-			}
-			return a.routeKeyToFocused(msg)
-		case "v":
-			// Toggle compact mode globally, even if sidebar is focused
-			if !a.mainPanel.IsFiltering() {
-				a.mainPanel.ToggleCompact()
-				return a, nil
-			}
-			return a.routeKeyToFocused(msg)
-		case KeyCtrlK:
-			if !a.mainPanel.IsFiltering() {
-				return a, func() tea.Msg {
-					return OpenIssueSearchMsg{}
-				}
-			}
-			return a.routeKeyToFocused(msg)
-		default:
-			// Route to focused panel.
-			return a.routeKeyToFocused(msg)
-		}
-
 	case spinner.TickMsg:
 		// Forward spinner ticks to both sidebar and main panel.
 		updatedSidebar, cmd1 := a.sidebar.Update(msg)
@@ -253,9 +265,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd2)
 		}
 		// Fetch issues for the newly selected team with the active filter.
-		cmds = append(cmds, a.fetchIssues(team.ID, a.activeFilter))
+		cmds = append(cmds, fetchIssues(a.ctx, team.ID, a.activeFilter))
 		// Also fetch team metadata to update sidebar filters
-		cmds = append(cmds, a.fetchTeamMetadata(team.ID))
+		cmds = append(cmds, fetchTeamMetadata(a.ctx, team.ID))
 		a.updateStatusBarHints()
 		return a, tea.Batch(cmds...)
 
@@ -271,7 +283,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-			cmds = append(cmds, a.fetchIssues(a.ctx.CurrentTeam.ID, a.activeFilter))
+			cmds = append(cmds, fetchIssues(a.ctx, a.ctx.CurrentTeam.ID, a.activeFilter))
 		}
 		return a, tea.Batch(cmds...)
 
@@ -281,7 +293,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case IssuesLoadedMsg:
 		// Only apply the message if it corresponds to the currently active filter.
-		// This prevents issues from a previously selected filter from overwriting 
+		// This prevents issues from a previously selected filter from overwriting
 		// the results of a more recent selection due to race conditions.
 		if msg.FilterName != a.activeFilter {
 			return a, nil
@@ -293,7 +305,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AutoTagIssuesMsg:
 		a.statusBar.SetSuccess("Auto-labeling: Fetching metadata...")
-		return a, a.autoTagIssues(msg.Issues)
+		return a, autoTagIssues(a.ctx, msg.Issues)
 
 	case appmsg.AutoLabelStartMsg:
 		a.autoLabelingIssues = msg.Issues
@@ -301,7 +313,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.autoLabelingAllowed = msg.Allowed
 		a.autoLabelingIndex = 0
 		a.statusBar.SetSuccess(fmt.Sprintf("Auto-labeling [0/%d]: Preparing...", len(a.autoLabelingIssues)))
-		return a, a.processNextIssue()
+		if a.autoLabelingIndex >= len(a.autoLabelingIssues) {
+			return a, func() tea.Msg { return RefreshIssuesMsg{} }
+		}
+		return a, processNextIssue(a.ctx, a.autoLabelingIssues[a.autoLabelingIndex], a.autoLabelingIndex+1, len(a.autoLabelingIssues), a.autoLabelingAllowed, a.autoLabelingMap)
 
 	case appmsg.AutoLabelProgressMsg:
 		a.statusBar.SetSuccess(msg.Message)
@@ -309,7 +324,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.autoLabelingIndex >= len(a.autoLabelingIssues) {
 			return a, func() tea.Msg { return RefreshIssuesMsg{} }
 		}
-		return a, a.processNextIssue()
+		return a, processNextIssue(a.ctx, a.autoLabelingIssues[a.autoLabelingIndex], a.autoLabelingIndex+1, len(a.autoLabelingIssues), a.autoLabelingAllowed, a.autoLabelingMap)
 
 	case RefreshIssuesMsg:
 		a.statusBar.SetSuccess("Auto-labeling complete")
@@ -319,7 +334,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		if a.ctx.CurrentTeam != nil {
-			cmds = append(cmds, a.fetchIssues(a.ctx.CurrentTeam.ID, a.activeFilter))
+			cmds = append(cmds, fetchIssues(a.ctx, a.ctx.CurrentTeam.ID, a.activeFilter))
 		}
 		return a, tea.Batch(cmds...)
 
@@ -344,13 +359,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		issue := msg.Issue
 		a.pendingIssue = &issue
 		if a.ctx.CurrentTeam != nil {
-			cmds = append(cmds, a.fetchWorkflowStates(a.ctx.CurrentTeam.ID))
+			cmds = append(cmds, fetchWorkflowStates(a.ctx, a.ctx.CurrentTeam.ID))
 		}
 		return a, tea.Batch(cmds...)
 
 	case OpenIssueSearchMsg:
 		a.statusBar.SetSuccess("Fetching my issues...")
-		return a, a.fetchMyIssues()
+		return a, fetchMyIssues(a.ctx)
 
 	case MyIssuesLoadedMsg:
 		a.statusBar.ClearSuccess()
@@ -381,7 +396,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.ctx.CurrentTeam != nil {
 			a.modal.OpenCreateIssue(a.ctx.CurrentTeam.ID, a.ctx.CurrentUser)
 			a.pendingCreateIssue = true
-			cmds = append(cmds, a.fetchTeamMetadata(a.ctx.CurrentTeam.ID))
+			cmds = append(cmds, fetchTeamMetadata(a.ctx, a.ctx.CurrentTeam.ID))
 		}
 		return a, tea.Batch(cmds...)
 
@@ -389,7 +404,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		issue := msg.Issue
 		a.pendingEditIssue = &issue
 		if a.ctx.CurrentTeam != nil {
-			cmds = append(cmds, a.fetchTeamMetadata(a.ctx.CurrentTeam.ID))
+			cmds = append(cmds, fetchTeamMetadata(a.ctx, a.ctx.CurrentTeam.ID))
 		}
 		return a, tea.Batch(cmds...)
 
@@ -435,7 +450,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				// Fetch issue counts for all non-separator filters.
 				if a.ctx.CurrentTeam != nil {
-					cmds = append(cmds, a.fetchFilterCounts(a.ctx.CurrentTeam.ID, filters))
+					cmds = append(cmds, fetchFilterCounts(a.ctx, a.ctx.CurrentTeam.ID, filters))
 				}
 			}
 
@@ -457,18 +472,18 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case modal.StatusChangeConfirmedMsg:
 		a.modal.Close()
-		cmds = append(cmds, a.updateIssueStatus(msg.IssueID, msg.NewStateID))
+		cmds = append(cmds, updateIssueStatus(a.ctx, msg.IssueID, msg.NewStateID))
 		return a, tea.Batch(cmds...)
 
 	case modal.IssueCreateConfirmedMsg:
 		a.modal.Close()
 		a.statusBar.SetSuccess("Creating issue...")
-		cmds = append(cmds, a.createIssue(msg))
+		cmds = append(cmds, createIssue(a.ctx, msg))
 		return a, tea.Batch(cmds...)
 
 	case IssueEditConfirmedMsg:
 		a.modal.Close()
-		cmds = append(cmds, a.editIssue(msg))
+		cmds = append(cmds, editIssue(a.ctx, msg))
 		return a, tea.Batch(cmds...)
 
 	// --- Mutation results ---
@@ -476,7 +491,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case IssueUpdatedMsg:
 		// Refresh the issue list with current filter.
 		if a.ctx.CurrentTeam != nil {
-			cmds = append(cmds, a.fetchIssues(a.ctx.CurrentTeam.ID, a.activeFilter))
+			cmds = append(cmds, fetchIssues(a.ctx, a.ctx.CurrentTeam.ID, a.activeFilter))
 		}
 		return a, tea.Batch(cmds...)
 
@@ -484,7 +499,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.statusBar.SetSuccess(fmt.Sprintf("Issue %s created successfully", msg.Issue.Identifier))
 		// Refresh the issue list with current filter.
 		if a.ctx.CurrentTeam != nil {
-			cmds = append(cmds, a.fetchIssues(a.ctx.CurrentTeam.ID, a.activeFilter))
+			cmds = append(cmds, fetchIssues(a.ctx, a.ctx.CurrentTeam.ID, a.activeFilter))
 		}
 		return a, tea.Batch(cmds...)
 
@@ -614,229 +629,6 @@ func (a App) routeKeyToFocused(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return a, cmd
 }
 
-// fetchViewer returns a command that fetches the authenticated user.
-func (a App) fetchViewer() tea.Cmd {
-	return func() tea.Msg {
-		viewer, err := a.ctx.Client.GetViewer()
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("fetch viewer: %w", err)}
-		}
-		return ViewerLoadedMsg{User: *viewer}
-	}
-}
-
-// fetchTeams returns a command that fetches the user's teams.
-func (a App) fetchTeams() tea.Cmd {
-	return func() tea.Msg {
-		teams, err := a.ctx.Client.GetTeams()
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("fetch teams: %w", err)}
-		}
-		return TeamsLoadedMsg{Teams: teams}
-	}
-}
-
-// fetchMyIssues returns a command that fetches all issues assigned to the current user.
-func (a App) fetchMyIssues() tea.Cmd {
-	if a.ctx.CurrentUser == nil {
-		return func() tea.Msg {
-			return ErrorMsg{Err: fmt.Errorf("not logged in")}
-		}
-	}
-
-	filter := map[string]any{
-		"assignee": map[string]any{
-			"id": map[string]any{"eq": a.ctx.CurrentUser.ID},
-		},
-		"state": map[string]any{
-			"type": map[string]any{"neq": "completed"},
-		},
-	}
-
-	return func() tea.Msg {
-		conn, err := a.ctx.Client.GetMyIssues(250, "", filter)
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("fetch my issues: %w", err)}
-		}
-		return MyIssuesLoadedMsg{Issues: conn.Nodes}
-	}
-}
-
-// fetchIssues returns a command that fetches issues for the given team with an optional status filter.
-func (a App) fetchIssues(teamID string, filterName string) tea.Cmd {
-	filter := buildIssueFilter(filterName, a.ctx.CurrentUser, a.ctx.CurrentProjects)
-	return func() tea.Msg {
-		conn, err := a.ctx.Client.GetIssues(teamID, 50, "", filter)
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("fetch issues: %w", err)}
-		}
-		
-		return IssuesLoadedMsg{
-			Issues:     conn.Nodes,
-			PageInfo:   conn.PageInfo,
-			FilterName: filterName,
-		}
-	}
-}
-
-// fetchFilterCounts returns a command that fetches issue counts for all non-separator filters.
-func (a App) fetchFilterCounts(teamID string, filterNames []string) tea.Cmd {
-	filterMap := make(map[string]map[string]any)
-	for _, name := range filterNames {
-		if name == "---" {
-			continue
-		}
-		f := buildIssueFilter(name, a.ctx.CurrentUser, a.ctx.CurrentProjects)
-		filterMap[name] = f
-	}
-	return func() tea.Msg {
-		counts, err := a.ctx.Client.GetFilterCounts(teamID, filterMap)
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("fetch filter counts: %w", err)}
-		}
-		return FilterCountsMsg{Counts: counts}
-	}
-}
-
-// buildIssueFilter converts a sidebar filter name to a Linear GraphQL IssueFilter.
-func buildIssueFilter(filterName string, currentUser *linear.User, projects []linear.Project) map[string]any {
-	switch filterName {
-	case "My Issues":
-		if currentUser != nil {
-			return map[string]any{
-				"assignee": map[string]any{
-					"id": map[string]any{"eq": currentUser.ID},
-				},
-			}
-		}
-		return nil
-	case "My Unlabeled Issues":
-		if currentUser != nil {
-			return map[string]any{
-				"assignee": map[string]any{
-					"id": map[string]any{"eq": currentUser.ID},
-				},
-				"labels": map[string]any{
-					"null": true,
-				},
-			}
-		}
-		return nil
-	case "My Issues + Active":
-		if currentUser != nil {
-			return map[string]any{
-				"and": []map[string]any{
-					{
-						"assignee": map[string]any{
-							"id": map[string]any{"eq": currentUser.ID},
-						},
-					},
-					{
-						"state": map[string]any{
-							"type": map[string]any{"eq": "started"},
-						},
-					},
-				},
-			}
-		}
-		return nil
-	case "Active":
-		// Linear state types: "started" covers In Progress, In Review, etc.
-		return map[string]any{
-			"state": map[string]any{
-				"type": map[string]any{"eq": "started"},
-			},
-		}
-	case "All Issues":
-		return nil
-	}
-
-	// Check for dynamic project filters
-	for _, p := range projects {
-		projectName := formatProjectNameForFilter(p.Name)
-		if filterName == projectName {
-			return map[string]any{
-				"project": map[string]any{
-					"id": map[string]any{"eq": p.ID},
-				},
-			}
-		}
-		if filterName == projectName+" + Active" {
-			return map[string]any{
-				"and": []map[string]any{
-					{
-						"project": map[string]any{
-							"id": map[string]any{"eq": p.ID},
-						},
-					},
-					{
-						"state": map[string]any{
-							"type": map[string]any{"eq": "started"},
-						},
-					},
-				},
-			}
-		}
-	}
-
-	return nil
-}
-
-// formatProjectNameForFilter removes any text between brackets and the brackets themselves.
-func formatProjectNameForFilter(name string) string {
-	var result []rune
-	inBracket := false
-	for _, r := range name {
-		if r == '[' {
-			inBracket = true
-			continue
-		}
-		if r == ']' {
-			inBracket = false
-			continue
-		}
-		if !inBracket {
-			result = append(result, r)
-		}
-	}
-	return strings.TrimSpace(string(result))
-}
-
-// fetchWorkflowStates returns a command that fetches workflow states for a team.
-func (a App) fetchWorkflowStates(teamID string) tea.Cmd {
-	return func() tea.Msg {
-		states, err := a.ctx.Client.GetWorkflowStates(teamID)
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("fetch workflow states: %w", err)}
-		}
-		return WorkflowStatesLoadedMsg{States: states}
-	}
-}
-
-// fetchTeamMetadata returns a command that fetches team metadata (members, projects, cycles).
-func (a App) fetchTeamMetadata(teamID string) tea.Cmd {
-	return func() tea.Msg {
-		meta, err := a.ctx.Client.GetTeamMetadata(teamID)
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("fetch team metadata: %w", err)}
-		}
-		return TeamMetadataLoadedMsg{Metadata: meta}
-	}
-}
-
-// updateIssueStatus returns a command that updates an issue's workflow state.
-func (a App) updateIssueStatus(issueID, stateID string) tea.Cmd {
-	return func() tea.Msg {
-		updated, err := a.ctx.Client.UpdateIssue(issueID, linear.IssueUpdateInput{
-			StateID: &stateID,
-		})
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("update issue status: %w", err)}
-		}
-		return IssueUpdatedMsg{Issue: *updated}
-	}
-}
-
 // updateStatusBarHints sets the status bar key hints based on the current state.
 func (a *App) updateStatusBarHints() {
 	if a.modal.Active() {
@@ -953,192 +745,4 @@ func (a App) renderHelp() string {
 		Render(b.String())
 
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, content)
-}
-
-// createIssue returns a command that creates a new issue.
-func (a App) createIssue(confirmed modal.IssueCreateConfirmedMsg) tea.Cmd {
-	return func() tea.Msg {
-		input := linear.IssueCreateInput{
-			TeamID: confirmed.TeamID,
-			Title:  confirmed.Title,
-		}
-		if confirmed.Description != "" {
-			desc := confirmed.Description
-			input.Description = &desc
-		}
-		if confirmed.Priority > 0 {
-			prio := confirmed.Priority
-			input.Priority = &prio
-		}
-		if confirmed.AssigneeID != nil {
-			input.AssigneeID = confirmed.AssigneeID
-		}
-		if confirmed.ProjectID != nil {
-			input.ProjectID = confirmed.ProjectID
-		}
-		if confirmed.StateID != nil {
-			input.StateID = confirmed.StateID
-		}
-		if confirmed.CycleID != nil {
-			input.CycleID = confirmed.CycleID
-		}
-
-		issue, err := a.ctx.Client.CreateIssue(input)
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("create issue: %w", err)}
-		}
-		return IssueCreatedMsg{Issue: *issue}
-	}
-}
-
-// editIssue returns a command that edits an existing issue.
-func (a App) editIssue(confirmed IssueEditConfirmedMsg) tea.Cmd {
-	return func() tea.Msg {
-		input := linear.IssueUpdateInput{
-			Title:       confirmed.Title,
-			Description: confirmed.Description,
-		}
-		if confirmed.Priority != nil {
-			input.Priority = confirmed.Priority
-		}
-		if confirmed.AssigneeID != nil {
-			input.AssigneeID = confirmed.AssigneeID
-		}
-		if confirmed.StateID != nil {
-			input.StateID = confirmed.StateID
-		}
-
-		issue, err := a.ctx.Client.UpdateIssue(confirmed.IssueID, input)
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("edit issue: %w", err)}
-		}
-		return IssueUpdatedMsg{Issue: *issue}
-	}
-}
-
-var allowedLabels = []string{
-	"Bug",
-	"New Feature",
-	"Feature Improvement",
-	"Investigation",
-	"System Improvement",
-	"Housekeeping",
-	"Documentation",
-}
-
-// autoTagIssues returns a command that auto-tags issues using Gemini CLI.
-func (a App) autoTagIssues(issues []linear.Issue) tea.Cmd {
-	if len(issues) == 0 {
-		return nil
-	}
-
-	return func() tea.Msg {
-		if a.ctx.CurrentTeam == nil {
-			return ErrorMsg{Err: fmt.Errorf("no current team")}
-		}
-
-		meta, err := a.ctx.Client.GetTeamMetadata(a.ctx.CurrentTeam.ID)
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("fetch team metadata: %w", err)}
-		}
-
-		labelMap := make(map[string]string)
-		for _, l := range meta.Labels {
-			labelMap[l.Name] = l.ID
-		}
-
-		existingAllowed := []string{}
-		for _, name := range allowedLabels {
-			if _, ok := labelMap[name]; ok {
-				existingAllowed = append(existingAllowed, name)
-			}
-		}
-
-		if len(existingAllowed) == 0 {
-			return ErrorMsg{Err: fmt.Errorf("none of the allowed labels exist in this team")}
-		}
-
-		return appmsg.AutoLabelStartMsg{
-			Issues:   issues,
-			LabelMap: labelMap,
-			Allowed:  existingAllowed,
-		}
-	}
-}
-
-func (a App) processNextIssue() tea.Cmd {
-	if a.autoLabelingIndex >= len(a.autoLabelingIssues) {
-		return func() tea.Msg { return RefreshIssuesMsg{} }
-	}
-
-	issue := a.autoLabelingIssues[a.autoLabelingIndex]
-	allowed := a.autoLabelingAllowed
-	labelMap := a.autoLabelingMap
-	total := len(a.autoLabelingIssues)
-	curr := a.autoLabelingIndex + 1
-
-	return func() tea.Msg {
-		desc := issue.Description
-		if len(desc) > 300 {
-			desc = desc[:300]
-		}
-		
-		prompt := fmt.Sprintf(
-			"Categorize this Linear issue into EXACTLY ONE of these categories:\n%s\n\nIssue:\nID: %s\nTitle: %s\nDescription: %s\n\nRespond ONLY with the category name. Do not include any other text.",
-			strings.Join(allowed, ", "),
-			issue.Identifier,
-			issue.Title,
-			desc,
-		)
-
-		cmd := exec.Command("gemini", "-p", prompt)
-		output, _ := cmd.Output()
-		category := strings.TrimSpace(string(output))
-		
-		var labelID string
-		var labelName string
-		for _, l := range allowed {
-			if strings.Contains(strings.ToLower(category), strings.ToLower(l)) {
-				labelID = labelMap[l]
-				labelName = l
-				break
-			}
-		}
-
-		if labelID != "" {
-			if err := a.ctx.Client.UpdateIssueLabels(issue.ID, []string{labelID}); err == nil {
-				return appmsg.AutoLabelProgressMsg{
-					Message: fmt.Sprintf("[%d/%d] Request: %s -> Response: %s", curr, total, issue.Identifier, labelName),
-				}
-			}
-		}
-		
-		return appmsg.AutoLabelProgressMsg{
-			Message: fmt.Sprintf("[%d/%d] Skipped %s (unknown category: %s)", curr, total, issue.Identifier, category),
-		}
-	}
-}
-
-// openBrowser opens the specified URL in the default web browser.
-func openBrowser(url string) tea.Cmd {
-	if url == "" {
-		return nil
-	}
-	return func() tea.Msg {
-		var err error
-		switch runtime.GOOS {
-		case "linux":
-			err = exec.Command("xdg-open", url).Start()
-		case "windows":
-			err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-		case "darwin":
-			err = exec.Command("open", url).Start()
-		default:
-			err = fmt.Errorf("unsupported platform: %s", runtime.GOOS)
-		}
-		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("open browser: %w", err)}
-		}
-		return nil
-	}
 }

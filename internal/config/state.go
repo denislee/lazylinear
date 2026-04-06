@@ -7,9 +7,9 @@ import (
 )
 
 type State struct {
-	LastTeamID   string `json:"last_team_id"`
-	LastFilter   string `json:"last_filter"`
-	CompactMode  bool   `json:"compact_mode"`
+	LastTeamID  string `json:"last_team_id"`
+	LastFilter  string `json:"last_filter"`
+	CompactMode bool   `json:"compact_mode"`
 }
 
 func defaultStatePath() string {

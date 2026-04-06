@@ -77,7 +77,7 @@ func NewEditIssue(issue linear.Issue, currentUser *linear.User, meta *linear.Tea
 	return m
 }
 
-func (m EditIssueModel) Update(msg tea.Msg) (EditIssueModel, tea.Cmd) {
+func (m EditIssueModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {

@@ -30,14 +30,14 @@ type Model struct {
 	filters        []string
 	filterCounts   map[string]int
 
-	focused        bool
-	width          int
-	height         int
-	loading        bool
-	loadFailed     bool
-	spinner        spinner.Model
-	initialTeamID  string
-	initialFilter  string
+	focused       bool
+	width         int
+	height        int
+	loading       bool
+	loadFailed    bool
+	spinner       spinner.Model
+	initialTeamID string
+	initialFilter string
 }
 
 // New creates a new sidebar model.
@@ -437,7 +437,7 @@ func truncate(s string, maxWidth int) string {
 	}
 	// Rough truncation; lipgloss.Width accounts for wide chars.
 	runes := []rune(s)
-	for len(runes) > 0 && lipgloss.Width(string(runes))  > maxWidth-3 {
+	for len(runes) > 0 && lipgloss.Width(string(runes)) > maxWidth-3 {
 		runes = runes[:len(runes)-1]
 	}
 	return string(runes) + "..."

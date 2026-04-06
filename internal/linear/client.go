@@ -336,7 +336,7 @@ func (c *Client) GetFilterCounts(teamID string, filters map[string]map[string]an
 		aliasToName[alias] = name
 		varName := fmt.Sprintf("$filter%d", i)
 		varDefs = append(varDefs, fmt.Sprintf("%s: IssueFilter", varName))
-		
+
 		f := filter
 		if name == "My Unlabeled Issues" {
 			// Deep copy filter and add labels null check.
@@ -347,9 +347,9 @@ func (c *Client) GetFilterCounts(teamID string, filters map[string]map[string]an
 			newFilter["labels"] = map[string]any{"null": true}
 			f = newFilter
 		}
-		
-		// We fetch nodes to count them. 
-		// Some connections in Linear's GraphQL API (like the one under team) 
+
+		// We fetch nodes to count them.
+		// Some connections in Linear's GraphQL API (like the one under team)
 		// might not support totalCount depending on the API version/state.
 		aliases = append(aliases, fmt.Sprintf("%s: issues(first: 250, filter: %s) { nodes { id } }", alias, varName))
 		vars[fmt.Sprintf("filter%d", i)] = f

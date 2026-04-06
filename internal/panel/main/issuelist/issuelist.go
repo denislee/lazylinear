@@ -235,7 +235,7 @@ func (m Model) View() string {
 			Background(lipgloss.Color("#7D56F4")).
 			Padding(0, 1).
 			Bold(true)
-		
+
 		button := buttonStyle.Render("[t] Auto-Label with Gemini")
 		return button + "\n\n" + m.list.View()
 	}
