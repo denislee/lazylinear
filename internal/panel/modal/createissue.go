@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -33,7 +32,7 @@ var priorities = []string{"None", "Urgent", "High", "Medium", "Low"}
 // CreateIssueModel is the issue creation form modal.
 type CreateIssueModel struct {
 	titleInput     textinput.Model
-	descInput      textarea.Model
+	descInput      textinput.Model
 	priorityCursor int
 	statusCursor   int
 	assigneeCursor int
@@ -60,10 +59,9 @@ func NewCreateIssue(teamID string, currentUser *linear.User) CreateIssueModel {
 	ti.SetWidth(50)
 	ti.Focus()
 
-	ta := textarea.New()
+	ta := textinput.New()
 	ta.Placeholder = "Description (optional)"
 	ta.SetWidth(50)
-	ta.SetHeight(4)
 	ta.Blur()
 
 	return CreateIssueModel{
@@ -308,11 +306,11 @@ func (m CreateIssueModel) View() string {
 
 	title := theme.TitleStyle.Render("Create Issue")
 	b.WriteString(title + "\n")
-	b.WriteString(theme.SubtitleStyle.Render(strings.Repeat("─", 40)) + "\n\n")
+	b.WriteString(theme.SubtitleStyle.Render(strings.Repeat("─", 40)) + "\n")
 
 	if m.err != "" {
 		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000"))
-		b.WriteString(errStyle.Render(m.err) + "\n\n")
+		b.WriteString(errStyle.Render(m.err) + "\n")
 	}
 
 	labelStyle := theme.SubtitleStyle
@@ -324,7 +322,7 @@ func (m CreateIssueModel) View() string {
 		titleLabel = focusedLabel.Render("Title:")
 	}
 	b.WriteString(titleLabel + "\n")
-	b.WriteString(m.titleInput.View() + "\n\n")
+	b.WriteString(m.titleInput.View() + "\n")
 
 	// Description
 	descLabel := labelStyle.Render("Description:")
@@ -332,7 +330,7 @@ func (m CreateIssueModel) View() string {
 		descLabel = focusedLabel.Render("Description:")
 	}
 	b.WriteString(descLabel + "\n")
-	b.WriteString(m.descInput.View() + "\n\n")
+	b.WriteString(m.descInput.View() + "\n")
 
 	// Priority
 	prioLabel := labelStyle.Render("Priority:")
@@ -341,7 +339,7 @@ func (m CreateIssueModel) View() string {
 	}
 	b.WriteString(prioLabel + " ")
 	b.WriteString(renderDropdown(priorities[m.priorityCursor], m.focusIndex == 2))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	loadingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666")).Italic(true)
 
@@ -360,7 +358,7 @@ func (m CreateIssueModel) View() string {
 		}
 		b.WriteString(renderDropdown(statusName, m.focusIndex == 3))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	// Assignee
 	assLabel := labelStyle.Render("Assignee:")
@@ -377,7 +375,7 @@ func (m CreateIssueModel) View() string {
 		}
 		b.WriteString(renderDropdown(assigneeName, m.focusIndex == 4))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	// Project
 	projLabel := labelStyle.Render("Project: ")
@@ -394,7 +392,7 @@ func (m CreateIssueModel) View() string {
 		}
 		b.WriteString(renderDropdown(projectName, m.focusIndex == 5))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	// Cycle
 	cycLabel := labelStyle.Render("Cycle:   ")
@@ -415,7 +413,7 @@ func (m CreateIssueModel) View() string {
 		}
 		b.WriteString(renderDropdown(cycleName, m.focusIndex == 6))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	// Submit button
 	submitStyle := lipgloss.NewStyle().Padding(0, 2)

@@ -3,7 +3,6 @@ package modal
 import (
 	"strings"
 
-	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -16,7 +15,7 @@ import (
 // EditIssueModel is the issue edit form modal.
 type EditIssueModel struct {
 	titleInput     textinput.Model
-	descInput      textarea.Model
+	descInput      textinput.Model
 	priorityCursor int
 	assigneeCursor int
 	stateCursor    int
@@ -37,11 +36,10 @@ func NewEditIssue(issue linear.Issue, currentUser *linear.User, meta *linear.Tea
 	ti.SetWidth(50)
 	ti.Focus()
 
-	ta := textarea.New()
+	ta := textinput.New()
 	ta.Placeholder = "Description (optional)"
 	ta.SetValue(issue.Description)
 	ta.SetWidth(50)
-	ta.SetHeight(4)
 	ta.Blur()
 
 	m := EditIssueModel{

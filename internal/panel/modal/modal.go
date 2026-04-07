@@ -92,7 +92,15 @@ func (m Model) View() string {
 	content := m.activeModal.View()
 
 	// Wrap in modal style.
-	modalContent := theme.ModalStyle.Render(content)
+	modalStyle := theme.ModalStyle
+	if _, ok := m.activeModal.(IssueSearchModel); ok {
+		// Use a wider style for the search modal to accommodate more space for results.
+		// The issue search list defaults to width-10, so width-6 is appropriate here
+		// since ModalStyle adds 4 characters of horizontal padding.
+		modalStyle = modalStyle.Width(m.width - 6)
+	}
+
+	modalContent := modalStyle.Render(content)
 
 	// Center on screen.
 	res := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalContent)

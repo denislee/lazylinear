@@ -79,7 +79,8 @@ func NewIssueSearch(issues []linear.Issue, width, height int) IssueSearchModel {
 		Bold(true)
 
 	// Start in filtering mode for fuzzy search
-	l.FilterState()
+	l.SetFilterText("")
+	l.SetFilterState(list.Filtering)
 
 	return IssueSearchModel{
 		list:   l,
@@ -104,6 +105,14 @@ func (m IssueSearchModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 			} else {
 				return m, func() tea.Msg { return appmsg.ModalClosedMsg{} }
 			}
+		case "ctrl+k":
+			return m, func() tea.Msg { return appmsg.ModalClosedMsg{} }
+		case "ctrl+n":
+			m.list.CursorDown()
+			return m, nil
+		case "ctrl+p":
+			m.list.CursorUp()
+			return m, nil
 		case "enter":
 			if i, ok := m.list.SelectedItem().(SearchItem); ok {
 				return m, func() tea.Msg {
