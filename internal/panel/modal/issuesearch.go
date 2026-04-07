@@ -72,6 +72,10 @@ func NewIssueSearch(issues []linear.Issue, width, height int) IssueSearchModel {
 	l.Title = "Search My Issues"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
+	
+	// Disable the default quit bindings so it doesn't conflict with the app
+	l.KeyMap.Quit.SetEnabled(false)
+	l.KeyMap.ForceQuit.SetEnabled(false)
 	l.Styles.Title = lipgloss.NewStyle().
 		Background(lipgloss.Color("#7D56F4")).
 		Foreground(lipgloss.Color("#FFF")).
@@ -99,7 +103,7 @@ func (m IssueSearchModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "esc":
+		case "esc", "ctrl+[":
 			if m.list.FilterState() == list.Filtering {
 				// If filtering, let the list handle it first.
 			} else {
