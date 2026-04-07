@@ -27,7 +27,7 @@ func LoadState() *State {
 		json.Unmarshal(data, state)
 	}
 	if state.LastFilter == "" {
-		state.LastFilter = "All Issues"
+		state.LastFilter = "My Issues + Active"
 	}
 	return state
 }

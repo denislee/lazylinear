@@ -142,6 +142,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if f == m.initialFilter {
 						m.filterCursor = i
 						m.selectedFilter = i
+						m.section = SectionFilters
 						cmds = append(cmds, func() tea.Msg {
 							return appmsg.FilterSelectedMsg{Filter: f}
 						})

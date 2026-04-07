@@ -56,17 +56,14 @@ func NewApp(client *linear.Client, state *config.State) App {
 	sb.SetFocused(true)
 
 	if state != nil {
-		sb.SetInitialState(state.LastTeamID, state.LastFilter)
+		sb.SetInitialState(state.LastTeamID, "My Issues + Active")
 	}
 
 	mp := mainpanel.New()
 	mp.SetFocused(false)
 
-	filter := "All Issues"
+	filter := "My Issues + Active"
 	if state != nil {
-		if state.LastFilter != "" {
-			filter = state.LastFilter
-		}
 		mp.SetCompact(state.CompactMode)
 	}
 	mp.SetFilterName(filter)
