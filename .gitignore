@@ -30,3 +30,20 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Build artifacts
+lazylinear
+
+# Debug and Logs
+debug.log
+debug_out.txt
+
+# Node.js and script artifacts
+node_modules/
+package.json
+package-lock.json
+test_sdk.js
+
+# AI Context files
+GEMINI.md
+CLAUDE.md
