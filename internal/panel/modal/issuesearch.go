@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -76,6 +77,17 @@ func NewIssueSearch(issues []linear.Issue, width, height int) IssueSearchModel {
 	// Disable the default quit bindings so it doesn't conflict with the app
 	l.KeyMap.Quit.SetEnabled(false)
 	l.KeyMap.ForceQuit.SetEnabled(false)
+
+	// Add pagination keys
+	l.KeyMap.PrevPage = key.NewBinding(
+		key.WithKeys("pgup", "ctrl+b"),
+		key.WithHelp("pgup", "prev page"),
+	)
+	l.KeyMap.NextPage = key.NewBinding(
+		key.WithKeys("pgdown", "ctrl+f"),
+		key.WithHelp("pgdn", "next page"),
+	)
+
 	l.Styles.Title = lipgloss.NewStyle().
 		Background(lipgloss.Color("#7D56F4")).
 		Foreground(lipgloss.Color("#FFF")).
@@ -116,6 +128,12 @@ func (m IssueSearchModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 			return m, nil
 		case "ctrl+p":
 			m.list.CursorUp()
+			return m, nil
+		case "ctrl+b":
+			m.list.Paginator.PrevPage()
+			return m, nil
+		case "ctrl+f":
+			m.list.Paginator.NextPage()
 			return m, nil
 		case "enter":
 			if i, ok := m.list.SelectedItem().(SearchItem); ok {

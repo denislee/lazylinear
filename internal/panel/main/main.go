@@ -109,6 +109,11 @@ func (m Model) IsFiltering() bool {
 	return false
 }
 
+// IsDetailView returns true if the detail view is currently active.
+func (m Model) IsDetailView() bool {
+	return m.activeView == detailView
+}
+
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
 	return nil
@@ -132,6 +137,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appmsg.RefreshIssuesMsg:
 		m.loading = true
 		return m, m.spinner.Tick
+
+	case appmsg.IssueUpdatedMsg:
+		var cmd tea.Cmd
+		m.issueDetail, cmd = m.issueDetail.Update(msg)
+		return m, cmd
 
 	case appmsg.IssuesLoadedMsg:
 		m.loading = false

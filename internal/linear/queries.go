@@ -52,9 +52,9 @@ const queryTeams = `query {
 	}
 }`
 
-const queryIssues = `query($teamId: String!, $first: Int!, $after: String, $filter: IssueFilter) {
+const queryIssues = `query($teamId: String!, $first: Int!, $after: String, $filter: IssueFilter, $includeArchived: Boolean) {
 	team(id: $teamId) {
-		issues(first: $first, after: $after, filter: $filter) {
+		issues(first: $first, after: $after, filter: $filter, includeArchived: $includeArchived) {
 			nodes {` + issueFragment + `
 			}
 			pageInfo {

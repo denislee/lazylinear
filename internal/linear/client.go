@@ -115,10 +115,11 @@ func (c *Client) GetTeams() ([]Team, error) {
 
 // GetIssues returns a paginated list of issues for a team.
 // The filter parameter is optional and can be nil.
-func (c *Client) GetIssues(teamID string, first int, after string, filter map[string]any) (*IssueConnection, error) {
+func (c *Client) GetIssues(teamID string, first int, after string, filter map[string]any, includeArchived bool) (*IssueConnection, error) {
 	vars := map[string]any{
-		"teamId": teamID,
-		"first":  first,
+		"teamId":          teamID,
+		"first":           first,
+		"includeArchived": includeArchived,
 	}
 	if after != "" {
 		vars["after"] = after

@@ -486,6 +486,13 @@ func (a App) handleCustomMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// --- Mutation results ---
 
 	case IssueUpdatedMsg:
+		// Forward to main panel to update the issue detail if active
+		updatedMain, cmd := a.mainPanel.Update(msg)
+		a.mainPanel = updatedMain.(mainpanel.Model)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
 		// Refresh the issue list with current filter.
 		if a.ctx.CurrentTeam != nil {
 			cmds = append(cmds, fetchIssues(a.ctx, a.ctx.CurrentTeam.ID, a.activeFilter))
@@ -637,11 +644,15 @@ func (a *App) updateStatusBarHints() {
 		a.statusBar.SetHints("j/k: navigate | enter: select | l: select & focus | c: create | ctrl+k: search | tab: issues | ?: help")
 	case PanelMain:
 		if a.mainPanel.Focused() {
-			hints := "j/k: navigate | /: filter | enter: browser | l: open | c: create | ctrl+k: search | ?: help"
-			if a.activeFilter == "My Unlabeled Issues" {
-				hints = "t: auto-label | " + hints
+			if a.mainPanel.IsDetailView() {
+				a.statusBar.SetHints("esc/h/q: back | j/k: scroll | e: edit | s: status | ?: help")
+			} else {
+				hints := "j/k: navigate | /: filter | enter: browser | l: open | c: create | ctrl+k: search | ?: help"
+				if a.activeFilter == "My Unlabeled Issues" {
+					hints = "t: auto-label | " + hints
+				}
+				a.statusBar.SetHints(hints)
 			}
-			a.statusBar.SetHints(hints)
 		} else {
 			a.statusBar.SetHints("tab: teams | ?: help")
 		}

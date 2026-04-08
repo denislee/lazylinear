@@ -68,6 +68,12 @@ func (m *Model) SetIssue(issue linear.Issue) {
 // Update handles messages for the detail view.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case appmsg.IssueUpdatedMsg:
+		if m.issue != nil && m.issue.ID == msg.Issue.ID {
+			m.SetIssue(msg.Issue)
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
 		if !m.focused {
 			return m, nil

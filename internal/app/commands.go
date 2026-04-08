@@ -36,8 +36,15 @@ func fetchTeams(ctx *AppContext) tea.Cmd {
 	}
 }
 
-// fetchMyIssues returns a command that fetches all issues assigned to the current user.
+// fetchMyIssues returns a command that fetches issues for the search modal.
+// We now fetch up to 250 recent issues for the current team assigned to the current user,
+// including completed and archived ones.
 func fetchMyIssues(ctx *AppContext) tea.Cmd {
+	if ctx.CurrentTeam == nil {
+		return func() tea.Msg {
+			return ErrorMsg{Err: fmt.Errorf("no team selected")}
+		}
+	}
 	if ctx.CurrentUser == nil {
 		return func() tea.Msg {
 			return ErrorMsg{Err: fmt.Errorf("not logged in")}
@@ -48,15 +55,13 @@ func fetchMyIssues(ctx *AppContext) tea.Cmd {
 		"assignee": map[string]any{
 			"id": map[string]any{"eq": ctx.CurrentUser.ID},
 		},
-		"state": map[string]any{
-			"type": map[string]any{"neq": "completed"},
-		},
 	}
 
 	return func() tea.Msg {
-		conn, err := ctx.Client.GetMyIssues(250, "", filter)
+		// Pass an assignee filter and includeArchived=true to get all issues for the user in the team
+		conn, err := ctx.Client.GetIssues(ctx.CurrentTeam.ID, 250, "", filter, true)
 		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("fetch my issues: %w", err)}
+			return ErrorMsg{Err: fmt.Errorf("fetch search issues: %w", err)}
 		}
 		return MyIssuesLoadedMsg{Issues: conn.Nodes}
 	}
@@ -66,7 +71,7 @@ func fetchMyIssues(ctx *AppContext) tea.Cmd {
 func fetchIssues(ctx *AppContext, teamID string, filterName string) tea.Cmd {
 	filter := buildIssueFilter(filterName, ctx.CurrentUser, ctx.CurrentProjects)
 	return func() tea.Msg {
-		conn, err := ctx.Client.GetIssues(teamID, 50, "", filter)
+		conn, err := ctx.Client.GetIssues(teamID, 50, "", filter, false)
 		if err != nil {
 			return ErrorMsg{Err: fmt.Errorf("fetch issues: %w", err)}
 		}
