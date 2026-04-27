@@ -15,3 +15,10 @@ const mutationUpdateIssue = `mutation($id: String!, $input: IssueUpdateInput!) {
 		}
 	}
 }`
+
+const mutationCreateLabel = `mutation($name: String!, $teamId: String!) {
+	issueLabelCreate(input: { name: $name, teamId: $teamId }) {
+		success
+		issueLabel { id }
+	}
+}`

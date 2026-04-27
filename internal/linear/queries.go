@@ -133,6 +133,25 @@ const queryTeamMetadata = `query($teamId: String!) {
 	}
 }`
 
+const queryAllIssueLabels = `query($after: String) {
+	issueLabels(first: 250, after: $after) {
+		pageInfo { hasNextPage endCursor }
+		nodes {
+			id
+			name
+			isGroup
+			parent { name }
+			team { id }
+		}
+	}
+}`
+
+const queryTeamLabelByName = `query($teamId: ID!, $name: String!) {
+	issueLabels(filter: { team: { id: { eq: $teamId } }, name: { eq: $name } }) {
+		nodes { id name }
+	}
+}`
+
 const queryProjects = `query($after: String) {
 	projects(first: 250, after: $after, includeArchived: true) {
 		nodes {

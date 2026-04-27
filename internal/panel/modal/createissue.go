@@ -35,15 +35,13 @@ type CreateIssueModel struct {
 	descInput      textinput.Model
 	priorityCursor int
 	statusCursor   int
-	assigneeCursor int
 	projectCursor  int
 	cycleCursor    int
-	focusIndex     int // 0=title, 1=desc, 2=priority, 3=status, 4=assignee, 5=project, 6=cycle, 7=submit
+	focusIndex     int // 0=title, 1=desc, 2=priority, 3=status, 4=project, 5=cycle, 6=submit
 	teamID         string
 	err            string
 
 	states       []linear.WorkflowState
-	assignees    []linear.User
 	projects     []linear.Project
 	cycles       []linear.Cycle
 	listsLoading bool
@@ -80,7 +78,6 @@ func (m *CreateIssueModel) SetMetadata(meta *linear.TeamMetadata) {
 		return
 	}
 
-	m.assignees = meta.Members
 	m.states = meta.States
 
 	var myProjects []linear.Project
@@ -93,16 +90,6 @@ func (m *CreateIssueModel) SetMetadata(meta *linear.TeamMetadata) {
 	m.projects = myProjects
 
 	m.cycles = meta.Cycles
-
-	// Set default assignee to current user
-	if m.currentUser != nil {
-		for i, a := range m.assignees {
-			if a.ID == m.currentUser.ID {
-				m.assigneeCursor = i + 1 // +1 because 0 is "Unassigned"
-				break
-			}
-		}
-	}
 
 	// Set default cycle to current cycle
 	now := time.Now()
@@ -128,17 +115,17 @@ func (m CreateIssueModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 			}
 
 		case "tab":
-			m.focusIndex = (m.focusIndex + 1) % 8
+			m.focusIndex = (m.focusIndex + 1) % 7
 			m.updateFocus()
 			return m, nil
 
 		case "shift+tab":
-			m.focusIndex = (m.focusIndex - 1 + 8) % 8
+			m.focusIndex = (m.focusIndex - 1 + 7) % 7
 			m.updateFocus()
 			return m, nil
 
 		case "enter":
-			if m.focusIndex == 7 && !m.listsLoading {
+			if m.focusIndex == 6 && !m.listsLoading {
 				return m.submit()
 			}
 
@@ -171,22 +158,7 @@ func (m CreateIssueModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case 4: // Assignee
-				if m.listsLoading {
-					return m, nil
-				}
-				switch key {
-				case "j", "down", "ctrl+n":
-					if m.assigneeCursor < len(m.assignees) {
-						m.assigneeCursor++
-					}
-				case "k", "up", "ctrl+p":
-					if m.assigneeCursor > 0 {
-						m.assigneeCursor--
-					}
-				}
-				return m, nil
-			case 5: // Project
+			case 4: // Project
 				if m.listsLoading {
 					return m, nil
 				}
@@ -201,7 +173,7 @@ func (m CreateIssueModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case 6: // Cycle
+			case 5: // Cycle
 				if m.listsLoading {
 					return m, nil
 				}
@@ -270,9 +242,8 @@ func (m CreateIssueModel) submit() (CreateIssueModel, tea.Cmd) {
 	}
 
 	var assigneeID *string
-	if m.assigneeCursor > 0 {
-		id := m.assignees[m.assigneeCursor-1].ID
-		assigneeID = &id
+	if m.currentUser != nil {
+		assigneeID = &m.currentUser.ID
 	}
 
 	var projectID *string
@@ -360,26 +331,9 @@ func (m CreateIssueModel) View() string {
 	}
 	b.WriteString("\n")
 
-	// Assignee
-	assLabel := labelStyle.Render("Assignee:")
-	if m.focusIndex == 4 {
-		assLabel = focusedLabel.Render("Assignee:")
-	}
-	b.WriteString(assLabel + " ")
-	if m.listsLoading {
-		b.WriteString(loadingStyle.Render("Loading..."))
-	} else {
-		assigneeName := "Unassigned"
-		if m.assigneeCursor > 0 {
-			assigneeName = m.assignees[m.assigneeCursor-1].Name
-		}
-		b.WriteString(renderDropdown(assigneeName, m.focusIndex == 4))
-	}
-	b.WriteString("\n")
-
 	// Project
 	projLabel := labelStyle.Render("Project: ")
-	if m.focusIndex == 5 {
+	if m.focusIndex == 4 {
 		projLabel = focusedLabel.Render("Project: ")
 	}
 	b.WriteString(projLabel + " ")
@@ -390,13 +344,13 @@ func (m CreateIssueModel) View() string {
 		if m.projectCursor > 0 {
 			projectName = m.projects[m.projectCursor-1].Name
 		}
-		b.WriteString(renderDropdown(projectName, m.focusIndex == 5))
+		b.WriteString(renderDropdown(projectName, m.focusIndex == 4))
 	}
 	b.WriteString("\n")
 
 	// Cycle
 	cycLabel := labelStyle.Render("Cycle:   ")
-	if m.focusIndex == 6 {
+	if m.focusIndex == 5 {
 		cycLabel = focusedLabel.Render("Cycle:   ")
 	}
 	b.WriteString(cycLabel + " ")
@@ -411,13 +365,13 @@ func (m CreateIssueModel) View() string {
 				cycleName = c.Name
 			}
 		}
-		b.WriteString(renderDropdown(cycleName, m.focusIndex == 6))
+		b.WriteString(renderDropdown(cycleName, m.focusIndex == 5))
 	}
 	b.WriteString("\n")
 
 	// Submit button
 	submitStyle := lipgloss.NewStyle().Padding(0, 2)
-	if m.focusIndex == 7 {
+	if m.focusIndex == 6 {
 		submitStyle = submitStyle.
 			Background(lipgloss.Color("#7D56F4")).
 			Foreground(lipgloss.Color("#FFFFFF")).

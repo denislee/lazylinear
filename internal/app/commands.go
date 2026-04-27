@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -122,7 +123,7 @@ func buildIssueFilter(filterName string, currentUser *linear.User, projects []li
 					"id": map[string]any{"eq": currentUser.ID},
 				},
 				"labels": map[string]any{
-					"null": true,
+					"length": map[string]any{"eq": 0},
 				},
 			}
 		}
@@ -303,17 +304,14 @@ func editIssue(ctx *AppContext, confirmed IssueEditConfirmedMsg) tea.Cmd {
 	}
 }
 
-var allowedLabels = []string{
-	"Bug",
-	"New Feature",
-	"Feature Improvement",
-	"Investigation",
-	"System Improvement",
-	"Housekeeping",
-	"Documentation",
-}
-
 // autoTagIssues returns a command that auto-tags issues using Gemini CLI.
+// It mirrors the logic of linear_labeler.py:
+//   1. Fetch every label in the workspace (paginated).
+//   2. Build team-specific + org-wide label name->id maps (skipping group labels).
+//   3. Use all discovered label names as allowed categories.
+//   4. Ask Gemini once for all issues in a single batch call.
+//   5. Parse "ID: Category" lines, preferring the longest matching label name.
+//   6. Apply suggestions, creating team labels on demand if missing.
 func autoTagIssues(ctx *AppContext, issues []linear.Issue) tea.Cmd {
 	if len(issues) == 0 {
 		return nil
@@ -323,66 +321,95 @@ func autoTagIssues(ctx *AppContext, issues []linear.Issue) tea.Cmd {
 		if ctx.CurrentTeam == nil {
 			return ErrorMsg{Err: fmt.Errorf("no current team")}
 		}
+		teamID := ctx.CurrentTeam.ID
 
-		meta, err := ctx.Client.GetTeamMetadata(ctx.CurrentTeam.ID)
+		all, err := ctx.Client.GetAllIssueLabels()
 		if err != nil {
-			return ErrorMsg{Err: fmt.Errorf("fetch team metadata: %w", err)}
+			return ErrorMsg{Err: fmt.Errorf("fetch issue labels: %w", err)}
 		}
 
-		labelMap := make(map[string]string)
-		for _, l := range meta.Labels {
-			labelMap[l.Name] = l.ID
-		}
-
-		existingAllowed := []string{}
-		for _, name := range allowedLabels {
-			if _, ok := labelMap[name]; ok {
-				existingAllowed = append(existingAllowed, name)
+		teamLabels := make(map[string]string)
+		orgLabels := make(map[string]string)
+		nameSet := make(map[string]struct{})
+		for _, l := range all {
+			if l.IsGroup {
+				continue
 			}
+			if l.TeamID == "" {
+				orgLabels[l.Name] = l.ID
+			} else if l.TeamID == teamID {
+				teamLabels[l.Name] = l.ID
+			}
+			// Allowed label universe includes every non-group label in the
+			// workspace — matching the default behavior of linear_labeler.py
+			// when --label-group is not set.
+			nameSet[l.Name] = struct{}{}
+		}
+		allowed := make([]string, 0, len(nameSet))
+		for name := range nameSet {
+			allowed = append(allowed, name)
+		}
+		sort.Strings(allowed)
+		if len(allowed) == 0 {
+			return ErrorMsg{Err: fmt.Errorf("no labels found in workspace")}
 		}
 
-		if len(existingAllowed) == 0 {
-			return ErrorMsg{Err: fmt.Errorf("none of the allowed labels exist in this team")}
+		inputs := make([]ai.IssueInput, 0, len(issues))
+		for _, i := range issues {
+			inputs = append(inputs, ai.IssueInput{
+				Identifier:  i.Identifier,
+				Title:       i.Title,
+				Description: i.Description,
+			})
+		}
+
+		suggestions, err := ai.NewGeminiClient().CategorizeIssues(inputs, allowed)
+		if err != nil {
+			return ErrorMsg{Err: fmt.Errorf("gemini categorize: %w", err)}
 		}
 
 		return appmsg.AutoLabelStartMsg{
-			Issues:   issues,
-			LabelMap: labelMap,
-			Allowed:  existingAllowed,
+			Issues:      issues,
+			Suggestions: suggestions,
+			TeamLabels:  teamLabels,
+			OrgLabels:   orgLabels,
+			TeamID:      teamID,
 		}
 	}
 }
 
-func processNextIssue(ctx *AppContext, issue linear.Issue, curr, total int, allowed []string, labelMap map[string]string) tea.Cmd {
+// applyIssueLabel resolves the label for a single issue (creating one if
+// necessary) and applies it, emitting a progress message.
+func applyIssueLabel(ctx *AppContext, issue linear.Issue, suggested string, curr, total int, teamLabels, orgLabels map[string]string, teamID string) tea.Cmd {
 	return func() tea.Msg {
-		aiClient := ai.NewGeminiClient()
-		category, err := aiClient.CategorizeIssue(issue.Identifier, issue.Title, issue.Description, allowed)
-		if err != nil {
+		if suggested == "" {
 			return appmsg.AutoLabelProgressMsg{
-				Message: fmt.Sprintf("[%d/%d] Skipped %s (error: %v)", curr, total, issue.Identifier, err),
+				Message: fmt.Sprintf("[%d/%d] %s: NOT CATEGORIZED", curr, total, issue.Identifier),
 			}
 		}
 
-		var labelID string
-		var labelName string
-		for _, l := range allowed {
-			if strings.Contains(strings.ToLower(category), strings.ToLower(l)) {
-				labelID = labelMap[l]
-				labelName = l
-				break
-			}
+		labelID := teamLabels[suggested]
+		if labelID == "" {
+			labelID = orgLabels[suggested]
 		}
-
-		if labelID != "" {
-			if err := ctx.Client.UpdateIssueLabels(issue.ID, []string{labelID}); err == nil {
+		if labelID == "" {
+			id, err := ctx.Client.CreateLabel(suggested, teamID)
+			if err != nil {
 				return appmsg.AutoLabelProgressMsg{
-					Message: fmt.Sprintf("[%d/%d] Request: %s -> Response: %s", curr, total, issue.Identifier, labelName),
+					Message: fmt.Sprintf("[%d/%d] %s: create label %q failed: %v", curr, total, issue.Identifier, suggested, err),
 				}
 			}
+			teamLabels[suggested] = id
+			labelID = id
 		}
 
+		if err := ctx.Client.UpdateIssueLabels(issue.ID, []string{labelID}); err != nil {
+			return appmsg.AutoLabelProgressMsg{
+				Message: fmt.Sprintf("[%d/%d] %s: update failed: %v", curr, total, issue.Identifier, err),
+			}
+		}
 		return appmsg.AutoLabelProgressMsg{
-			Message: fmt.Sprintf("[%d/%d] Skipped %s (unknown category: %s)", curr, total, issue.Identifier, category),
+			Message: fmt.Sprintf("[%d/%d] %s -> %s", curr, total, issue.Identifier, suggested),
 		}
 	}
 }

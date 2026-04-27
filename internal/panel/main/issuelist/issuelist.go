@@ -1,10 +1,14 @@
 package issuelist
 
 import (
+	"fmt"
+	"strings"
+
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/atotto/clipboard"
 
 	"github.com/denislee/lazylinear/internal/linear"
 	appmsg "github.com/denislee/lazylinear/internal/msg"
@@ -99,6 +103,7 @@ func (m *Model) SetCompact(compact bool) {
 	m.compact = compact
 	delegate := NewIssueDelegate()
 	delegate.Compact = m.compact
+	delegate.FilterName = m.filterName
 	m.list.SetDelegate(delegate)
 }
 
@@ -128,6 +133,12 @@ func (m *Model) SetTeamID(teamID string) {
 func (m *Model) SetFilterName(name string) {
 	m.filterName = name
 	m.list.Title = "Issues - " + name
+	// Rebuild the delegate so it picks up the new filter name (used to
+	// drop user-scoped columns like "assignee" on "My *" filters).
+	delegate := NewIssueDelegate()
+	delegate.Compact = m.compact
+	delegate.FilterName = name
+	m.list.SetDelegate(delegate)
 	// Re-size to account for the auto-label button if needed.
 	m.SetSize(m.width, m.height)
 }
@@ -208,6 +219,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					return appmsg.AutoTagIssuesMsg{Issues: issues}
 				}
 			}
+
+		case "y":
+			if item, ok := m.list.SelectedItem().(IssueItem); ok {
+				text := fmt.Sprintf("chore(%s): %s", item.Issue.Identifier, strings.ReplaceAll(item.Issue.Title, ":", ","))
+				if err := clipboard.WriteAll(text); err != nil {
+					return m, func() tea.Msg {
+						return appmsg.ErrorMsg{Err: fmt.Errorf("copy to clipboard: %w", err)}
+					}
+				}
+			}
+			return m, nil
 
 		case "r":
 			return m, func() tea.Msg {

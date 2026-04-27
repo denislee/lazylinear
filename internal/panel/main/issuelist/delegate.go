@@ -43,9 +43,10 @@ func (i IssueItem) FilterValue() string {
 
 // IssueDelegate is a custom delegate for rendering issue list items.
 type IssueDelegate struct {
-	height  int
-	spacing int
-	Compact bool
+	height     int
+	spacing    int
+	Compact    bool
+	FilterName string
 }
 
 // NewIssueDelegate creates a new issue delegate.
@@ -96,51 +97,84 @@ func (d *IssueDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 		textWidth = 1
 	}
 
-	// Build the title line: identifier + title.
+	prio := priorityIndicator(issue.Issue.Priority)
 	identifier := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#7D56F4")).
 		Render(issue.Issue.Identifier)
 	title := issue.Issue.Title
 
-	titleLine := identifier + "  " + title
-	titleLine = ansi.Truncate(titleLine, textWidth, "...")
-
 	if d.Compact {
-		statusStyle := theme.StatusStyle(issue.Issue.State.Type)
-		statusBadge := statusStyle.Render("●")
-
-		age := formatAge(issue.Issue.CreatedAt)
+		statusBadge := theme.StatusStyle(issue.Issue.State.Type).Render("●")
 		ageStr := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#666")).
-			Render(age)
+			Render(formatAge(issue.Issue.CreatedAt))
+		labelsStr := renderLabels(issue.Issue.Labels.Nodes, 1)
 
-		// Calculate available width for title
-		// badge + space + cursor (2) + spaces (2) + age
-		availableWidth := textWidth - lipgloss.Width(statusBadge) - lipgloss.Width(ageStr) - 5
-		if availableWidth < 10 {
-			availableWidth = 10
+		// "My *" filters are scoped to the current user, so the assignee
+		// column is redundant — drop it to give more room to the title.
+		showAssignee := !strings.HasPrefix(d.FilterName, "My ")
+		assigneeStr := ""
+		if showAssignee {
+			assignee := "—"
+			if issue.Issue.Assignee != nil {
+				assignee = issue.Issue.Assignee.Name
+			}
+			assigneeStr = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#888")).
+				Render(assignee)
 		}
 
-		titleLine := identifier + "  " + title
-		titleLine = ansi.Truncate(titleLine, availableWidth, "...")
+		const (
+			prioW     = 3
+			statusW   = 1
+			idW       = 10
+			assigneeW = 14
+			labelsW   = 8
+			ageW      = 5
+		)
+		reserved := prioW + statusW + idW + labelsW + ageW
+		gaps := 5 // gaps between the columns we always render
+		if showAssignee {
+			reserved += assigneeW
+			gaps++
+		}
+		titleW := textWidth - reserved - gaps
+		if titleW < 12 {
+			titleW = 12
+		}
 
-		titleLine = statusBadge + " " + titleLine + "  " + ageStr
+		cols := []string{
+			padOrTruncate(prio, prioW),
+			padOrTruncate(statusBadge, statusW),
+			padOrTruncate(identifier, idW),
+			padOrTruncate(title, titleW),
+		}
+		if showAssignee {
+			cols = append(cols, padOrTruncate(assigneeStr, assigneeW))
+		}
+		cols = append(cols,
+			padOrTruncate(labelsStr, labelsW),
+			padOrTruncate(ageStr, ageW),
+		)
+		line := strings.Join(cols, " ")
 
 		if isSelected {
 			cursor := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#7D56F4")).
 				Render("> ")
-			titleLine = cursor + titleLine
+			line = cursor + line
 		} else {
-			titleLine = "  " + titleLine
+			line = "  " + line
 		}
 
-		fmt.Fprintf(w, "%s", titleLine) //nolint:errcheck
+		fmt.Fprintf(w, "%s", line) //nolint:errcheck
 		return
 	}
 
-	// Build the description line: status badge + assignee + project + age.
+	titleLine := prio + " " + identifier + "  " + title
+	titleLine = ansi.Truncate(titleLine, textWidth, "...")
+
 	statusStyle := theme.StatusStyle(issue.Issue.State.Type)
 	statusBadge := statusStyle.Render("● " + issue.Issue.State.Name)
 
@@ -148,27 +182,29 @@ func (d *IssueDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	if issue.Issue.Assignee != nil {
 		assignee = issue.Issue.Assignee.Name
 	}
-
-	projectStr := ""
-	if issue.Issue.Project != nil {
-		projectStr = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#A885FF")).
-			Render(issue.Issue.Project.Name) + "  "
-	}
-
-	age := formatAge(issue.Issue.CreatedAt)
-	ageStr := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#666")).
-		Render(age)
-
 	assigneeStr := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#888")).
-		Render(assignee)
+		Render("@" + assignee)
 
-	descLine := statusBadge + "  " + projectStr + assigneeStr + "  " + ageStr
+	sep := lipgloss.NewStyle().Foreground(lipgloss.Color("#444")).Render(" · ")
+	descParts := []string{statusBadge, assigneeStr}
+	if issue.Issue.Project != nil {
+		projectStr := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#A885FF")).
+			Render("▶ " + issue.Issue.Project.Name)
+		descParts = append(descParts, projectStr)
+	}
+	if labelsStr := renderLabels(issue.Issue.Labels.Nodes, 4); labelsStr != "" {
+		descParts = append(descParts, labelsStr)
+	}
+	ageStr := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#666")).
+		Render(formatAge(issue.Issue.CreatedAt))
+	descParts = append(descParts, ageStr)
+
+	descLine := strings.Join(descParts, sep)
 	descLine = ansi.Truncate(descLine, textWidth, "...")
 
-	// Apply selection styling.
 	if isSelected {
 		cursor := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#7D56F4")).
@@ -181,6 +217,82 @@ func (d *IssueDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	}
 
 	fmt.Fprintf(w, "%s\n%s", titleLine, descLine) //nolint:errcheck
+}
+
+// padOrTruncate pads s with spaces or truncates it (ANSI-aware) so the
+// visible width equals width. An empty string becomes pure padding.
+func padOrTruncate(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	w := lipgloss.Width(s)
+	if w == width {
+		return s
+	}
+	if w > width {
+		return ansi.Truncate(s, width, "…")
+	}
+	return s + strings.Repeat(" ", width-w)
+}
+
+// priorityIndicator returns a styled icon representing an issue's priority.
+// Linear priorities: 0=None, 1=Urgent, 2=High, 3=Medium, 4=Low.
+func priorityIndicator(p int) string {
+	switch p {
+	case 1:
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(lipgloss.Color("#EB5757")).
+			Bold(true).
+			Render(" ! ")
+	case 2:
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F2994A")).
+			Bold(true).
+			Render("▆▆▆")
+	case 3:
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F2C94C")).
+			Render("▆▆▁")
+	case 4:
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#888")).
+			Render("▆▁▁")
+	default:
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#444")).
+			Render(" – ")
+	}
+}
+
+// renderLabels renders up to max labels as colored pills, truncating each
+// label name to maxNameLen runes. If more labels exist, it appends a "+N"
+// counter in muted color.
+func renderLabels(labels []linear.Label, max int) string {
+	const maxNameLen = 4
+	if len(labels) == 0 {
+		return ""
+	}
+	var parts []string
+	for i, l := range labels {
+		if i >= max {
+			parts = append(parts, lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#666")).
+				Render(fmt.Sprintf("+%d", len(labels)-i)))
+			break
+		}
+		color := l.Color
+		if color == "" {
+			color = "#888"
+		}
+		name := l.Name
+		if r := []rune(name); len(r) > maxNameLen {
+			name = string(r[:maxNameLen])
+		}
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+		parts = append(parts, style.Render("●"+name))
+	}
+	return strings.Join(parts, " ")
 }
 
 // formatAge formats a time.Time into a human-readable age string.

@@ -107,11 +107,14 @@ type AutoLabelProgressMsg struct {
 	Message string
 }
 
-// AutoLabelStartMsg is sent to start sequential labeling.
+// AutoLabelStartMsg is sent to start sequential labeling after all
+// suggestions have been gathered in a single batch.
 type AutoLabelStartMsg struct {
-	Issues   []linear.Issue
-	LabelMap map[string]string
-	Allowed  []string
+	Issues      []linear.Issue
+	Suggestions map[string]string // identifier -> suggested label name ("" = not categorized)
+	TeamLabels  map[string]string // name -> label ID for current team
+	OrgLabels   map[string]string // name -> label ID for org-wide (no team) labels
+	TeamID      string
 }
 
 // RefreshIssuesMsg is sent when the issue list wants to refresh with the current filter.

@@ -116,11 +116,7 @@ func (m IssueSearchModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "esc", "ctrl+[":
-			if m.list.FilterState() == list.Filtering {
-				// If filtering, let the list handle it first.
-			} else {
-				return m, func() tea.Msg { return appmsg.ModalClosedMsg{} }
-			}
+			return m, func() tea.Msg { return appmsg.ModalClosedMsg{} }
 		case "ctrl+k":
 			return m, func() tea.Msg { return appmsg.ModalClosedMsg{} }
 		case "ctrl+n":

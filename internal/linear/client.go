@@ -2,14 +2,20 @@ package linear
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
-const apiURL = "https://api.linear.app/graphql"
+const (
+	apiURL         = "https://api.linear.app/graphql"
+	requestTimeout = 30 * time.Second
+	maxProjects    = 5000 // safety cap on paginated project fetch
+)
 
 // Client is a Linear API client.
 type Client struct {
@@ -20,8 +26,10 @@ type Client struct {
 // NewClient creates a new Linear API client.
 func NewClient(apiKey string) *Client {
 	return &Client{
-		apiKey:     apiKey,
-		httpClient: &http.Client{},
+		apiKey: apiKey,
+		httpClient: &http.Client{
+			Timeout: requestTimeout,
+		},
 	}
 }
 
@@ -49,7 +57,10 @@ func (c *Client) execute(query string, variables map[string]any, result any) err
 		return fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(body))
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -67,8 +78,11 @@ func (c *Client) execute(query string, variables map[string]any, result any) err
 		return fmt.Errorf("read response: %w", err)
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("unauthorized: invalid or expired Linear API key")
+	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, truncate(string(respBody), 512))
 	}
 
 	var gqlResp graphQLResponse
@@ -266,13 +280,21 @@ func (c *Client) getAllProjects() ([]Project, error) {
 
 		all = append(all, resp.Projects.Nodes...)
 
-		if !resp.Projects.PageInfo.HasNextPage {
+		if !resp.Projects.PageInfo.HasNextPage || len(all) >= maxProjects {
 			break
 		}
 		cursor = &resp.Projects.PageInfo.EndCursor
 	}
 
 	return all, nil
+}
+
+// truncate shortens s to n runes, appending an ellipsis when truncated.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // CreateIssue creates a new issue and returns it.
@@ -340,12 +362,12 @@ func (c *Client) GetFilterCounts(teamID string, filters map[string]map[string]an
 
 		f := filter
 		if name == "My Unlabeled Issues" {
-			// Deep copy filter and add labels null check.
+			// Deep copy filter and add labels length=0 check.
 			newFilter := make(map[string]any)
 			for k, v := range filter {
 				newFilter[k] = v
 			}
-			newFilter["labels"] = map[string]any{"null": true}
+			newFilter["labels"] = map[string]any{"length": map[string]any{"eq": 0}}
 			f = newFilter
 		}
 
@@ -386,6 +408,119 @@ func (c *Client) GetFilterCounts(teamID string, filters map[string]map[string]an
 	}
 
 	return counts, nil
+}
+
+// IssueLabelNode is a flat representation of a Linear label including
+// its parent group (if any) and its team (empty when org-wide).
+type IssueLabelNode struct {
+	ID         string
+	Name       string
+	IsGroup    bool
+	ParentName string
+	TeamID     string
+}
+
+// GetAllIssueLabels returns every label in the workspace, across pages.
+func (c *Client) GetAllIssueLabels() ([]IssueLabelNode, error) {
+	var out []IssueLabelNode
+	cursor := ""
+	for {
+		vars := map[string]any{}
+		if cursor != "" {
+			vars["after"] = cursor
+		}
+		var resp struct {
+			IssueLabels struct {
+				PageInfo PageInfo `json:"pageInfo"`
+				Nodes    []struct {
+					ID      string `json:"id"`
+					Name    string `json:"name"`
+					IsGroup bool   `json:"isGroup"`
+					Parent  *struct {
+						Name string `json:"name"`
+					} `json:"parent"`
+					Team *struct {
+						ID string `json:"id"`
+					} `json:"team"`
+				} `json:"nodes"`
+			} `json:"issueLabels"`
+		}
+		if err := c.execute(queryAllIssueLabels, vars, &resp); err != nil {
+			return nil, err
+		}
+		for _, n := range resp.IssueLabels.Nodes {
+			node := IssueLabelNode{
+				ID:      n.ID,
+				Name:    n.Name,
+				IsGroup: n.IsGroup,
+			}
+			if n.Parent != nil {
+				node.ParentName = n.Parent.Name
+			}
+			if n.Team != nil {
+				node.TeamID = n.Team.ID
+			}
+			out = append(out, node)
+		}
+		if !resp.IssueLabels.PageInfo.HasNextPage {
+			break
+		}
+		cursor = resp.IssueLabels.PageInfo.EndCursor
+	}
+	return out, nil
+}
+
+// GetTeamLabelByName fetches a single label by exact name within a team.
+// Returns the label ID, or "" if not found.
+func (c *Client) GetTeamLabelByName(name, teamID string) (string, error) {
+	vars := map[string]any{
+		"teamId": teamID,
+		"name":   name,
+	}
+	var resp struct {
+		IssueLabels struct {
+			Nodes []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"nodes"`
+		} `json:"issueLabels"`
+	}
+	if err := c.execute(queryTeamLabelByName, vars, &resp); err != nil {
+		return "", err
+	}
+	if len(resp.IssueLabels.Nodes) == 0 {
+		return "", nil
+	}
+	return resp.IssueLabels.Nodes[0].ID, nil
+}
+
+// CreateLabel creates a new label for a team and returns its ID. If creation
+// fails (e.g. duplicate name), a lookup by name is attempted before giving up.
+func (c *Client) CreateLabel(name, teamID string) (string, error) {
+	vars := map[string]any{
+		"name":   name,
+		"teamId": teamID,
+	}
+	var resp struct {
+		IssueLabelCreate struct {
+			Success     bool `json:"success"`
+			IssueLabel  struct {
+				ID string `json:"id"`
+			} `json:"issueLabel"`
+		} `json:"issueLabelCreate"`
+	}
+	if err := c.execute(mutationCreateLabel, vars, &resp); err == nil && resp.IssueLabelCreate.Success {
+		return resp.IssueLabelCreate.IssueLabel.ID, nil
+	}
+	// Fall back to lookup — Linear rejects duplicate names per team.
+	id, err := c.GetTeamLabelByName(name, teamID)
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", fmt.Errorf("create label %q failed and label not found on team", name)
+	}
+	return id, nil
 }
 
 // UpdateIssueLabels updates the labels of an issue.

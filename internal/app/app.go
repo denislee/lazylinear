@@ -7,6 +7,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/atotto/clipboard"
 
 	"github.com/denislee/lazylinear/internal/config"
 	"github.com/denislee/lazylinear/internal/linear"
@@ -40,10 +41,12 @@ type App struct {
 	pendingIssue        *linear.Issue // issue awaiting workflow states for status change
 	pendingEditIssue    *linear.Issue // issue awaiting metadata for edit modal
 	pendingCreateIssue  bool          // whether we are waiting for metadata to create an issue
-	autoLabelingIssues  []linear.Issue
-	autoLabelingIndex   int
-	autoLabelingMap     map[string]string
-	autoLabelingAllowed []string
+	autoLabelingIssues      []linear.Issue
+	autoLabelingIndex       int
+	autoLabelingSuggestions map[string]string
+	autoLabelingTeamLabels  map[string]string
+	autoLabelingOrgLabels   map[string]string
+	autoLabelingTeamID      string
 }
 
 // NewApp creates a new root App model.
@@ -234,7 +237,12 @@ func (a App) handleCustomMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ViewerLoadedMsg:
 		user := msg.User
 		a.ctx.CurrentUser = &user
-		return a, nil
+		// If a team was already selected before the viewer loaded, refetch
+		// issues now so user-scoped filters like "My Issues + Active" apply.
+		if a.ctx.CurrentTeam != nil {
+			cmds = append(cmds, fetchIssues(a.ctx, a.ctx.CurrentTeam.ID, a.activeFilter))
+		}
+		return a, tea.Batch(cmds...)
 
 	case TeamsLoadedMsg:
 		a.ctx.Teams = msg.Teams
@@ -301,19 +309,22 @@ func (a App) handleCustomMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 
 	case AutoTagIssuesMsg:
-		a.statusBar.SetSuccess("Auto-labeling: Fetching metadata...")
+		a.statusBar.SetSuccess("Auto-labeling: Fetching labels and categorizing with Gemini...")
 		return a, autoTagIssues(a.ctx, msg.Issues)
 
 	case appmsg.AutoLabelStartMsg:
 		a.autoLabelingIssues = msg.Issues
-		a.autoLabelingMap = msg.LabelMap
-		a.autoLabelingAllowed = msg.Allowed
+		a.autoLabelingSuggestions = msg.Suggestions
+		a.autoLabelingTeamLabels = msg.TeamLabels
+		a.autoLabelingOrgLabels = msg.OrgLabels
+		a.autoLabelingTeamID = msg.TeamID
 		a.autoLabelingIndex = 0
-		a.statusBar.SetSuccess(fmt.Sprintf("Auto-labeling [0/%d]: Preparing...", len(a.autoLabelingIssues)))
+		a.statusBar.SetSuccess(fmt.Sprintf("Auto-labeling [0/%d]: Applying suggestions...", len(a.autoLabelingIssues)))
 		if a.autoLabelingIndex >= len(a.autoLabelingIssues) {
 			return a, func() tea.Msg { return RefreshIssuesMsg{} }
 		}
-		return a, processNextIssue(a.ctx, a.autoLabelingIssues[a.autoLabelingIndex], a.autoLabelingIndex+1, len(a.autoLabelingIssues), a.autoLabelingAllowed, a.autoLabelingMap)
+		first := a.autoLabelingIssues[a.autoLabelingIndex]
+		return a, applyIssueLabel(a.ctx, first, a.autoLabelingSuggestions[first.Identifier], a.autoLabelingIndex+1, len(a.autoLabelingIssues), a.autoLabelingTeamLabels, a.autoLabelingOrgLabels, a.autoLabelingTeamID)
 
 	case appmsg.AutoLabelProgressMsg:
 		a.statusBar.SetSuccess(msg.Message)
@@ -321,7 +332,8 @@ func (a App) handleCustomMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.autoLabelingIndex >= len(a.autoLabelingIssues) {
 			return a, func() tea.Msg { return RefreshIssuesMsg{} }
 		}
-		return a, processNextIssue(a.ctx, a.autoLabelingIssues[a.autoLabelingIndex], a.autoLabelingIndex+1, len(a.autoLabelingIssues), a.autoLabelingAllowed, a.autoLabelingMap)
+		next := a.autoLabelingIssues[a.autoLabelingIndex]
+		return a, applyIssueLabel(a.ctx, next, a.autoLabelingSuggestions[next.Identifier], a.autoLabelingIndex+1, len(a.autoLabelingIssues), a.autoLabelingTeamLabels, a.autoLabelingOrgLabels, a.autoLabelingTeamID)
 
 	case RefreshIssuesMsg:
 		a.statusBar.SetSuccess("Auto-labeling complete")
@@ -501,6 +513,13 @@ func (a App) handleCustomMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case IssueCreatedMsg:
 		a.statusBar.SetSuccess(fmt.Sprintf("Issue %s created successfully", msg.Issue.Identifier))
+		_ = clipboard.WriteAll(fmt.Sprintf("chore(%s): %s", msg.Issue.Identifier, strings.ReplaceAll(msg.Issue.Title, ":", ",")))
+		// Auto-label the new issue using the same Gemini-based flow used for
+		// the "My Unlabeled Issues" view.
+		newIssue := msg.Issue
+		cmds = append(cmds, func() tea.Msg {
+			return AutoTagIssuesMsg{Issues: []linear.Issue{newIssue}}
+		})
 		// Refresh the issue list with current filter.
 		if a.ctx.CurrentTeam != nil {
 			cmds = append(cmds, fetchIssues(a.ctx, a.ctx.CurrentTeam.ID, a.activeFilter))

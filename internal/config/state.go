@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -20,11 +21,13 @@ func defaultStatePath() string {
 	return filepath.Join(home, ".config", "lazylinear", "state.json")
 }
 
+// LoadState reads persisted UI state from disk. A missing or corrupt file
+// falls back to defaults — persisted state is a convenience, not critical.
 func LoadState() *State {
 	state := &State{}
-	data, err := os.ReadFile(defaultStatePath())
-	if err == nil {
-		json.Unmarshal(data, state)
+	if data, err := os.ReadFile(defaultStatePath()); err == nil {
+		// Ignore unmarshal error: fall back to defaults on corruption.
+		_ = json.Unmarshal(data, state)
 	}
 	if state.LastFilter == "" {
 		state.LastFilter = "My Issues + Active"
@@ -35,9 +38,14 @@ func LoadState() *State {
 func SaveState(state *State) error {
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal state: %w", err)
 	}
 	path := defaultStatePath()
-	os.MkdirAll(filepath.Dir(path), 0755)
-	return os.WriteFile(path, data, 0644)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write state file: %w", err)
+	}
+	return nil
 }
