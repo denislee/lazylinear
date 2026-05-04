@@ -80,6 +80,7 @@ type IssueEditConfirmedMsg struct {
 	Priority    *int
 	AssigneeID  *string
 	StateID     *string
+	ProjectID   *string
 }
 
 // IssueCreatedMsg is sent when an issue has been created.

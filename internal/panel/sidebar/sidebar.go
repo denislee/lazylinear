@@ -343,18 +343,24 @@ func (m Model) View() tea.View {
 
 	// Team list.
 	for i, t := range m.teams {
-		cursor := "  "
-		style := lipgloss.NewStyle()
+		label := truncate(fmt.Sprintf("[%s] %s", t.Key, t.Name), innerWidth-2)
 
 		if m.section == SectionTeams && i == m.cursor && m.focused {
-			cursor = "> "
-			style = theme.SelectedStyle
-		} else if i == m.selectedTeam {
-			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
+			line := lipgloss.NewStyle().
+				Background(lipgloss.Color("#7D56F4")).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Bold(true).
+				Width(innerWidth).
+				Render("  " + label)
+			b.WriteString(line + "\n")
+			continue
 		}
 
-		label := truncate(fmt.Sprintf("[%s] %s", t.Key, t.Name), innerWidth-2)
-		b.WriteString(cursor + style.Render(label) + "\n")
+		style := lipgloss.NewStyle()
+		if i == m.selectedTeam {
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
+		}
+		b.WriteString("  " + style.Render(label) + "\n")
 	}
 
 	// Separator.
@@ -374,16 +380,6 @@ func (m Model) View() tea.View {
 			continue
 		}
 
-		cursor := "  "
-		style := lipgloss.NewStyle()
-
-		if m.section == SectionFilters && i == m.filterCursor && m.focused {
-			cursor = "> "
-			style = theme.SelectedStyle
-		} else if i == m.selectedFilter {
-			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
-		}
-
 		filterLabel := f
 		if m.filterCounts != nil {
 			if count, ok := m.filterCounts[f]; ok {
@@ -395,7 +391,23 @@ func (m Model) View() tea.View {
 			}
 		}
 		label := truncate(filterLabel, innerWidth-2)
-		b.WriteString(cursor + style.Render(label) + "\n")
+
+		if m.section == SectionFilters && i == m.filterCursor && m.focused {
+			line := lipgloss.NewStyle().
+				Background(lipgloss.Color("#7D56F4")).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Bold(true).
+				Width(innerWidth).
+				Render("  " + label)
+			b.WriteString(line + "\n")
+			continue
+		}
+
+		style := lipgloss.NewStyle()
+		if i == m.selectedFilter {
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
+		}
+		b.WriteString("  " + style.Render(label) + "\n")
 	}
 
 	content := b.String()

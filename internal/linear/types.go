@@ -104,4 +104,5 @@ type IssueUpdateInput struct {
 	StateID     *string `json:"stateId,omitempty"`
 	AssigneeID  *string `json:"assigneeId,omitempty"`
 	Priority    *int    `json:"priority,omitempty"`
+	ProjectID   *string `json:"projectId,omitempty"`
 }

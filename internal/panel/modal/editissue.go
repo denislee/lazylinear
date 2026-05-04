@@ -19,12 +19,14 @@ type EditIssueModel struct {
 	priorityCursor int
 	assigneeCursor int
 	stateCursor    int
-	focusIndex     int // 0=title, 1=desc, 2=priority, 3=assignee, 4=state, 5=submit
+	projectCursor  int
+	focusIndex     int // 0=title, 1=desc, 2=priority, 3=assignee, 4=state, 5=project, 6=submit
 	issueID        string
 	err            string
 
 	assignees []linear.User
 	states    []linear.WorkflowState
+	projects  []linear.Project
 }
 
 // NewEditIssue creates a new issue edit form modal.
@@ -52,6 +54,29 @@ func NewEditIssue(issue linear.Issue, currentUser *linear.User, meta *linear.Tea
 	if meta != nil {
 		m.assignees = meta.Members
 		m.states = meta.States
+
+		var myProjects []linear.Project
+		for _, p := range meta.Projects {
+			status := strings.ToLower(p.Status.Name)
+			if status == "developing" && currentUser != nil && p.Lead != nil && p.Lead.ID == currentUser.ID {
+				myProjects = append(myProjects, p)
+			}
+		}
+		// Always include the issue's current project even if it doesn't match the filter,
+		// so the user can see and keep their current selection.
+		if issue.Project != nil {
+			found := false
+			for _, p := range myProjects {
+				if p.ID == issue.Project.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				myProjects = append([]linear.Project{*issue.Project}, myProjects...)
+			}
+		}
+		m.projects = myProjects
 	}
 
 	// Set default assignee to current issue assignee
@@ -72,6 +97,16 @@ func NewEditIssue(issue linear.Issue, currentUser *linear.User, meta *linear.Tea
 		}
 	}
 
+	// Set default project to current issue project
+	if issue.Project != nil {
+		for i, p := range m.projects {
+			if p.ID == issue.Project.ID {
+				m.projectCursor = i + 1 // +1 because 0 is "No Project"
+				break
+			}
+		}
+	}
+
 	return m
 }
 
@@ -89,17 +124,17 @@ func (m EditIssueModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 			}
 
 		case "tab":
-			m.focusIndex = (m.focusIndex + 1) % 6
+			m.focusIndex = (m.focusIndex + 1) % 7
 			m.updateFocus()
 			return m, nil
 
 		case "shift+tab":
-			m.focusIndex = (m.focusIndex - 1 + 6) % 6
+			m.focusIndex = (m.focusIndex - 1 + 7) % 7
 			m.updateFocus()
 			return m, nil
 
 		case "enter":
-			if m.focusIndex == 5 {
+			if m.focusIndex == 6 {
 				return m.submit()
 			}
 
@@ -138,6 +173,18 @@ func (m EditIssueModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 				case "k", "up", "ctrl+p":
 					if m.stateCursor > 0 {
 						m.stateCursor--
+					}
+				}
+				return m, nil
+			case 5: // Project
+				switch key {
+				case "j", "down", "ctrl+n":
+					if m.projectCursor < len(m.projects) {
+						m.projectCursor++
+					}
+				case "k", "up", "ctrl+p":
+					if m.projectCursor > 0 {
+						m.projectCursor--
 					}
 				}
 				return m, nil
@@ -200,6 +247,12 @@ func (m EditIssueModel) submit() (EditIssueModel, tea.Cmd) {
 		stateID = &id
 	}
 
+	var projectID *string
+	if m.projectCursor > 0 {
+		id := m.projects[m.projectCursor-1].ID
+		projectID = &id
+	}
+
 	return m, func() tea.Msg {
 		priority := m.priorityCursor
 		return appmsg.IssueEditConfirmedMsg{
@@ -209,6 +262,7 @@ func (m EditIssueModel) submit() (EditIssueModel, tea.Cmd) {
 			Priority:    &priority,
 			AssigneeID:  assigneeID,
 			StateID:     stateID,
+			ProjectID:   projectID,
 		}
 	}
 }
@@ -279,9 +333,22 @@ func (m EditIssueModel) View() string {
 	b.WriteString(renderDropdown(stateName, m.focusIndex == 4))
 	b.WriteString("\n\n")
 
+	// Project
+	projectName := "No Project"
+	if m.projectCursor > 0 {
+		projectName = m.projects[m.projectCursor-1].Name
+	}
+	projLabel := labelStyle.Render("Project:")
+	if m.focusIndex == 5 {
+		projLabel = focusedLabel.Render("Project:")
+	}
+	b.WriteString(projLabel + " ")
+	b.WriteString(renderDropdown(projectName, m.focusIndex == 5))
+	b.WriteString("\n\n")
+
 	// Submit button
 	submitStyle := lipgloss.NewStyle().Padding(0, 2)
-	if m.focusIndex == 5 {
+	if m.focusIndex == 6 {
 		submitStyle = submitStyle.
 			Background(lipgloss.Color("#7D56F4")).
 			Foreground(lipgloss.Color("#FFFFFF")).

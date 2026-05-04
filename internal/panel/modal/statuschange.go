@@ -1,7 +1,6 @@
 package modal
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -86,11 +85,6 @@ func (m StatusChangeModel) View() string {
 	b.WriteString(theme.SubtitleStyle.Render(strings.Repeat("─", 40)) + "\n\n")
 
 	for i, state := range m.states {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "> "
-		}
-
 		stateStyle := theme.StatusStyle(state.Type)
 		name := stateStyle.Render(state.Name)
 
@@ -102,15 +96,16 @@ func (m StatusChangeModel) View() string {
 				Render(" (current)")
 		}
 
-		// Highlight the cursor line.
+		line := "  " + name + current
 		if i == m.cursor {
-			cursor = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#7D56F4")).
+			line = lipgloss.NewStyle().
+				Background(lipgloss.Color("#3A2F5C")).
 				Bold(true).
-				Render("> ")
+				Width(56).
+				Render(line)
 		}
 
-		b.WriteString(fmt.Sprintf("%s%s%s\n", cursor, name, current))
+		b.WriteString(line + "\n")
 	}
 
 	b.WriteString("\n" + theme.SubtitleStyle.Render("j/k: navigate  enter: confirm  esc: cancel"))

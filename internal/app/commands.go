@@ -295,6 +295,9 @@ func editIssue(ctx *AppContext, confirmed IssueEditConfirmedMsg) tea.Cmd {
 		if confirmed.StateID != nil {
 			input.StateID = confirmed.StateID
 		}
+		if confirmed.ProjectID != nil {
+			input.ProjectID = confirmed.ProjectID
+		}
 
 		issue, err := ctx.Client.UpdateIssue(confirmed.IssueID, input)
 		if err != nil {

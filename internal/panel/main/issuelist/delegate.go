@@ -15,6 +15,27 @@ import (
 	"github.com/denislee/lazylinear/internal/theme"
 )
 
+const selectedBg = "#5D4399"
+
+// selectedBgPrefix is the ANSI sequence that opens the selection background.
+// Inner styled segments end with `\x1b[0m`, which clears the outer bg; we
+// splice this prefix in after each reset so the highlight stays continuous
+// across segments that set their own foreground.
+var selectedBgPrefix = func() string {
+	sample := lipgloss.NewStyle().Background(lipgloss.Color(selectedBg)).Render("X")
+	if i := strings.Index(sample, "X"); i > 0 {
+		return sample[:i]
+	}
+	return ""
+}()
+
+func fillSelectedBg(s string) string {
+	// Lipgloss v2 closes styled segments with `\x1b[m` (empty params = full
+	// reset), which clears the outer background mid-row. Re-open the bg
+	// after each reset so the highlight stays painted across all segments.
+	return strings.ReplaceAll(s, "\x1b[m", "\x1b[m"+selectedBgPrefix)
+}
+
 // IssueItem wraps a linear.Issue to implement the list.DefaultItem interface.
 type IssueItem struct {
 	Issue linear.Issue
@@ -98,9 +119,14 @@ func (d *IssueDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	}
 
 	prio := priorityIndicator(issue.Issue.Priority)
+	idColor := "#7D56F4"
+	if isSelected {
+		// The selection bg is also purple; swap to white so the ID stays legible.
+		idColor = "#FFFFFF"
+	}
 	identifier := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#7D56F4")).
+		Foreground(lipgloss.Color(idColor)).
 		Render(issue.Issue.Identifier)
 	title := issue.Issue.Title
 
@@ -160,10 +186,10 @@ func (d *IssueDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 		line := strings.Join(cols, " ")
 
 		if isSelected {
-			cursor := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#7D56F4")).
-				Render("> ")
-			line = cursor + line
+			line = lipgloss.NewStyle().
+				Background(lipgloss.Color(selectedBg)).
+				Width(m.Width()).
+				Render("  " + fillSelectedBg(line))
 		} else {
 			line = "  " + line
 		}
@@ -206,11 +232,11 @@ func (d *IssueDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	descLine = ansi.Truncate(descLine, textWidth, "...")
 
 	if isSelected {
-		cursor := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#7D56F4")).
-			Render("> ")
-		titleLine = cursor + titleLine
-		descLine = "  " + descLine
+		bg := lipgloss.NewStyle().
+			Background(lipgloss.Color(selectedBg)).
+			Width(m.Width())
+		titleLine = bg.Render("  " + fillSelectedBg(titleLine))
+		descLine = bg.Render("  " + fillSelectedBg(descLine))
 	} else {
 		titleLine = "  " + titleLine
 		descLine = "  " + descLine
