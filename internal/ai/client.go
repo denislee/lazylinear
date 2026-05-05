@@ -14,6 +14,7 @@ const (
 	geminiTimeout      = 30 * time.Second
 	geminiBatchTimeout = 120 * time.Second
 	maxDescription     = 300
+	geminiModel        = "gemini-2.5-flash-lite"
 )
 
 // IssueInput carries the fields needed to categorize an issue.
@@ -55,7 +56,7 @@ func (c *GeminiClient) CategorizeIssue(identifier, title, description string, al
 	ctx, cancel := context.WithTimeout(context.Background(), geminiTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "gemini", "-p", prompt)
+	cmd := exec.CommandContext(ctx, "gemini", "-m", geminiModel, "-p", prompt)
 	output, err := cmd.Output()
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -114,7 +115,7 @@ func (c *GeminiClient) CategorizeIssues(issues []IssueInput, allowedCategories [
 	ctx, cancel := context.WithTimeout(context.Background(), geminiBatchTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "gemini", "-p", prompt)
+	cmd := exec.CommandContext(ctx, "gemini", "-m", geminiModel, "-p", prompt)
 	output, err := cmd.Output()
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {

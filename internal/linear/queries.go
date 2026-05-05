@@ -123,7 +123,7 @@ const queryTeamMetadata = `query($teamId: String!) {
 				position
 			}
 		}
-		labels {
+		labels(includeArchived: false) {
 			nodes {
 				id
 				name
@@ -134,7 +134,7 @@ const queryTeamMetadata = `query($teamId: String!) {
 }`
 
 const queryAllIssueLabels = `query($after: String) {
-	issueLabels(first: 250, after: $after) {
+	issueLabels(first: 250, after: $after, includeArchived: false) {
 		pageInfo { hasNextPage endCursor }
 		nodes {
 			id
@@ -147,7 +147,7 @@ const queryAllIssueLabels = `query($after: String) {
 }`
 
 const queryTeamLabelByName = `query($teamId: ID!, $name: String!) {
-	issueLabels(filter: { team: { id: { eq: $teamId } }, name: { eq: $name } }) {
+	issueLabels(filter: { team: { id: { eq: $teamId } }, name: { eq: $name } }, includeArchived: false) {
 		nodes { id name }
 	}
 }`
