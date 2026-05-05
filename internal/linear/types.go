@@ -32,6 +32,12 @@ type Cycle struct {
 	CompletedAt *time.Time `json:"completedAt"`
 }
 
+// ProjectCycleIssues contains completed issues for a specific cycle.
+type ProjectCycleIssues struct {
+	Cycle  Cycle
+	Issues []Issue
+}
+
 // Team represents a Linear team.
 type Team struct {
 	ID   string `json:"id"`

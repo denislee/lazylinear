@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -287,6 +289,143 @@ func (c *Client) getAllProjects() ([]Project, error) {
 	}
 
 	return all, nil
+}
+
+// GetLeadingProjects returns projects where the user is the lead and status is "Developing".
+func (c *Client) GetLeadingProjects(userID string) ([]Project, error) {
+	vars := map[string]any{
+		"userId": userID,
+	}
+	var resp struct {
+		Projects struct {
+			Nodes []Project `json:"nodes"`
+		} `json:"projects"`
+	}
+	if err := c.execute(queryLeadingProjects, vars, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Projects.Nodes, nil
+}
+
+// GetProjectIssuesFromLastCycle returns names of completed issues from the most
+// recently ended cycle of a project.
+func (c *Client) GetProjectIssuesFromLastCycle(projectID string) ([]string, error) {
+	cycles, err := c.GetProjectIssuesByCycles(projectID)
+	if err != nil {
+		return nil, err
+	}
+	if len(cycles) == 0 {
+		return nil, nil
+	}
+	last := cycles[0]
+	titles := make([]string, len(last.Issues))
+	for i, iss := range last.Issues {
+		titles[i] = iss.Title
+	}
+	return titles, nil
+}
+
+// fetchProjectCycleIDs scans up to 500 issues in a project and returns the unique
+// cycles attached to them. Issues without a cycle are skipped.
+func (c *Client) fetchProjectCycleIDs(projectID string) ([]Cycle, error) {
+	cycleMap := make(map[string]Cycle)
+	var cursor *string
+	for page := 0; page < 5; page++ {
+		vars := map[string]any{
+			"projectId": projectID,
+			"first":     100,
+		}
+		if cursor != nil {
+			vars["after"] = *cursor
+		}
+		var resp struct {
+			Issues struct {
+				Nodes []struct {
+					Cycle *Cycle `json:"cycle"`
+				} `json:"nodes"`
+				PageInfo PageInfo `json:"pageInfo"`
+			} `json:"issues"`
+		}
+		if err := c.execute(queryProjectAllCycles, vars, &resp); err != nil {
+			return nil, err
+		}
+		for _, n := range resp.Issues.Nodes {
+			if n.Cycle == nil || n.Cycle.ID == "" {
+				continue
+			}
+			cycleMap[n.Cycle.ID] = *n.Cycle
+		}
+		if !resp.Issues.PageInfo.HasNextPage || resp.Issues.PageInfo.EndCursor == "" {
+			break
+		}
+		next := resp.Issues.PageInfo.EndCursor
+		cursor = &next
+	}
+	cycles := make([]Cycle, 0, len(cycleMap))
+	for _, cyc := range cycleMap {
+		cycles = append(cycles, cyc)
+	}
+	sort.Slice(cycles, func(i, j int) bool {
+		return cycles[i].EndsAt.After(cycles[j].EndsAt)
+	})
+	return cycles, nil
+}
+
+// GetProjectIssuesByCycles returns all completed issues for a project, grouped by cycle.
+func (c *Client) GetProjectIssuesByCycles(projectID string) ([]ProjectCycleIssues, error) {
+	cycles, err := c.fetchProjectCycleIDs(projectID)
+	if err != nil {
+		return nil, err
+	}
+	if len(cycles) == 0 {
+		return nil, nil
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	results := make([]ProjectCycleIssues, 0, len(cycles))
+	errs := make([]error, 0)
+
+	for _, cyc := range cycles {
+		wg.Add(1)
+		go func(cyc Cycle) {
+			defer wg.Done()
+			vars := map[string]any{
+				"projectId": projectID,
+				"cycleId":   cyc.ID,
+				"first":     250,
+			}
+			var issuesResp struct {
+				Issues struct {
+					Nodes []Issue `json:"nodes"`
+				} `json:"issues"`
+			}
+			if err := c.execute(queryProjectIssuesByCycle, vars, &issuesResp); err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+				return
+			}
+
+			mu.Lock()
+			results = append(results, ProjectCycleIssues{
+				Cycle:  cyc,
+				Issues: issuesResp.Issues.Nodes,
+			})
+			mu.Unlock()
+		}(cyc)
+	}
+	wg.Wait()
+
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Cycle.EndsAt.After(results[j].Cycle.EndsAt)
+	})
+
+	return results, nil
 }
 
 // truncate shortens s to n runes, appending an ellipsis when truncated.

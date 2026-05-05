@@ -136,3 +136,43 @@ type FilterCountsMsg struct {
 type ErrorMsg struct {
 	Err error
 }
+
+// LeadingProjectsLoadedMsg is sent when projects led by the user have been fetched.
+type LeadingProjectsLoadedMsg struct {
+	Projects []linear.Project
+}
+
+// ProjectSelectedMsg is sent when a project is highlighted in the sidebar.
+type ProjectSelectedMsg struct {
+	Project linear.Project
+}
+
+// ProjectCyclesLoadedMsg is sent when project issues grouped by cycles have been fetched.
+type ProjectCyclesLoadedMsg struct {
+	ProjectName string
+	Cycles      []linear.ProjectCycleIssues
+}
+
+// CopyProjectIssuesMsg is sent to trigger copying project issues to clipboard.
+type CopyProjectIssuesMsg struct {
+	Project linear.Project
+}
+
+// ProjectIssuesCopiedMsg is sent when the names of issues from the last cycle have been copied to the clipboard.
+type ProjectIssuesCopiedMsg struct {
+	ProjectName string
+	Count       int
+}
+
+// CopyCycleIssuesMsg is sent to trigger copying cycle issues to clipboard.
+type CopyCycleIssuesMsg struct {
+	Cycle  linear.Cycle
+	Issues []linear.Issue
+}
+
+// CycleIssuesCopiedMsg is sent when the names of issues from a cycle have been copied to the clipboard.
+type CycleIssuesCopiedMsg struct {
+	CycleNumber int
+	CycleName   string
+	Count       int
+}

@@ -10,6 +10,7 @@ import (
 	appmsg "github.com/denislee/lazylinear/internal/msg"
 	"github.com/denislee/lazylinear/internal/panel/main/issuedetail"
 	"github.com/denislee/lazylinear/internal/panel/main/issuelist"
+	"github.com/denislee/lazylinear/internal/panel/main/projectissues"
 	"github.com/denislee/lazylinear/internal/theme"
 )
 
@@ -19,6 +20,7 @@ type viewState int
 const (
 	listView   viewState = iota
 	detailView           // will be used in Phase 4
+	projectCyclesView
 )
 
 // Model is the main panel container.
@@ -32,6 +34,7 @@ type Model struct {
 	loading     bool
 	issueList   issuelist.Model
 	issueDetail issuedetail.Model
+	projectIssues projectissues.Model
 	spinner     spinner.Model
 }
 
@@ -45,6 +48,7 @@ func New() Model {
 		activeView:  listView,
 		issueList:   issuelist.New(),
 		issueDetail: issuedetail.New(),
+		projectIssues: projectissues.New(),
 		spinner:     s,
 	}
 }
@@ -66,6 +70,7 @@ func (m *Model) SetSize(width, height int) {
 
 	m.issueList.SetSize(innerWidth, innerHeight)
 	m.issueDetail.SetSize(innerWidth, innerHeight)
+	m.projectIssues.SetSize(innerWidth, innerHeight)
 }
 
 // SetFocused sets the focus state of the main panel.
@@ -73,6 +78,7 @@ func (m *Model) SetFocused(focused bool) {
 	m.focused = focused
 	m.issueList.SetFocused(focused)
 	m.issueDetail.SetFocused(focused)
+	m.projectIssues.SetFocused(focused)
 }
 
 // SetFilterName passes the filter name down to the issue list.
@@ -175,6 +181,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.issueDetail.SetSize(innerWidth, innerHeight)
 		return m, nil
 
+	case appmsg.ProjectSelectedMsg:
+		m.activeView = projectCyclesView
+		m.loading = true
+		updated, cmd := m.projectIssues.Update(msg)
+		m.projectIssues = updated
+		return m, tea.Batch(cmd, m.spinner.Tick)
+
+	case appmsg.ProjectCyclesLoadedMsg:
+		m.loading = false
+		m.activeView = projectCyclesView
+		updated, cmd := m.projectIssues.Update(msg)
+		m.projectIssues = updated
+		return m, cmd
+
 	case appmsg.BackToListMsg:
 		m.activeView = listView
 		return m, nil
@@ -201,6 +221,11 @@ func (m Model) routeToActiveView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.issueDetail, cmd = m.issueDetail.Update(msg)
 		return m, cmd
+	case projectCyclesView:
+		var cmd tea.Cmd
+		updated, cmd := m.projectIssues.Update(msg)
+		m.projectIssues = updated
+		return m, cmd
 	}
 	return m, nil
 }
@@ -218,16 +243,22 @@ func (m Model) View() tea.View {
 	}
 
 	var content string
-	if m.teamName == "" {
+	if m.teamName == "" && m.activeView != projectCyclesView {
 		content = m.centeredPlaceholder(innerWidth, innerHeight, "Select a team to view issues")
 	} else if m.loading {
-		content = m.centeredPlaceholder(innerWidth, innerHeight, m.spinner.View()+" Loading issues...")
+		loadingText := m.spinner.View() + " Loading issues..."
+		if m.activeView == projectCyclesView {
+			loadingText = m.spinner.View() + " Loading cycles for " + m.projectIssues.ProjectName() + "..."
+		}
+		content = m.centeredPlaceholder(innerWidth, innerHeight, loadingText)
 	} else {
 		switch m.activeView {
 		case listView:
 			content = m.issueList.View()
 		case detailView:
 			content = m.issueDetail.View()
+		case projectCyclesView:
+			content = m.projectIssues.View()
 		default:
 			content = m.centeredPlaceholder(innerWidth, innerHeight, "Unknown view")
 		}

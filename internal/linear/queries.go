@@ -170,3 +170,47 @@ const queryProjects = `query($after: String) {
 		}
 	}
 }`
+
+const queryLeadingProjects = `query($userId: ID!) {
+	projects(filter: { lead: { id: { eq: $userId } }, status: { name: { eq: "Developing" } } }) {
+		nodes {
+			id
+			name
+			status {
+				name
+			}
+		}
+	}
+}`
+
+const queryProjectAllCycles = `query($projectId: ID!, $first: Int!, $after: String) {
+	issues(filter: { project: { id: { eq: $projectId } } }, first: $first, after: $after) {
+		nodes {
+			cycle {
+				id
+				name
+				number
+				startsAt
+				endsAt
+				completedAt
+			}
+		}
+		pageInfo {
+			hasNextPage
+			endCursor
+		}
+	}
+}`
+
+const queryProjectIssuesByCycle = `query($projectId: ID!, $cycleId: ID!, $first: Int!, $after: String) {
+	issues(filter: { project: { id: { eq: $projectId } }, cycle: { id: { eq: $cycleId } }, state: { type: { eq: "completed" } } }, first: $first, after: $after) {
+		nodes {` + issueFragment + `
+		}
+		pageInfo {
+			hasNextPage
+			endCursor
+		}
+	}
+}`
+
+

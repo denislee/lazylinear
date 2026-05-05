@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/atotto/clipboard"
 
 	"github.com/denislee/lazylinear/internal/ai"
 	"github.com/denislee/lazylinear/internal/linear"
@@ -34,6 +35,87 @@ func fetchTeams(ctx *AppContext) tea.Cmd {
 			return ErrorMsg{Err: fmt.Errorf("fetch teams: %w", err)}
 		}
 		return TeamsLoadedMsg{Teams: teams}
+	}
+}
+
+// fetchLeadingProjects returns a command that fetches projects led by the user with status "Developing".
+func fetchLeadingProjects(ctx *AppContext) tea.Cmd {
+	if ctx.CurrentUser == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		projects, err := ctx.Client.GetLeadingProjects(ctx.CurrentUser.ID)
+		if err != nil {
+			return ErrorMsg{Err: fmt.Errorf("fetch leading projects: %w", err)}
+		}
+		return appmsg.LeadingProjectsLoadedMsg{Projects: projects}
+	}
+}
+
+// copyProjectIssues returns a command that fetches project issues from the last cycle and copies them to the clipboard.
+func copyProjectIssues(ctx *AppContext, project linear.Project) tea.Cmd {
+	return func() tea.Msg {
+		titles, err := ctx.Client.GetProjectIssuesFromLastCycle(project.ID)
+		if err != nil {
+			return ErrorMsg{Err: fmt.Errorf("copy project issues: %w", err)}
+		}
+
+		if len(titles) == 0 {
+			return ErrorMsg{Err: fmt.Errorf("no completed issues found in the last cycle of %s", project.Name)}
+		}
+
+		for i, title := range titles {
+			titles[i] = "- " + title
+		}
+
+		text := strings.Join(titles, "\n")
+		if err := clipboard.WriteAll(text); err != nil {
+			return ErrorMsg{Err: fmt.Errorf("write to clipboard: %w", err)}
+		}
+
+		return appmsg.ProjectIssuesCopiedMsg{
+			ProjectName: project.Name,
+			Count:       len(titles),
+		}
+	}
+}
+
+// copyCycleIssues returns a command that copies cycle issues to the clipboard.
+func copyCycleIssues(cycle linear.Cycle, issues []linear.Issue) tea.Cmd {
+	return func() tea.Msg {
+		if len(issues) == 0 {
+			return ErrorMsg{Err: fmt.Errorf("no issues found in Cycle %d", cycle.Number)}
+		}
+
+		titles := make([]string, len(issues))
+		for i, issue := range issues {
+			titles[i] = "- " + issue.Title
+		}
+
+		text := strings.Join(titles, "\n")
+		if err := clipboard.WriteAll(text); err != nil {
+			return ErrorMsg{Err: fmt.Errorf("write to clipboard: %w", err)}
+		}
+
+		return appmsg.CycleIssuesCopiedMsg{
+			CycleNumber: cycle.Number,
+			CycleName:   cycle.Name,
+			Count:       len(issues),
+		}
+	}
+}
+
+// fetchProjectCycles returns a command that fetches project issues grouped by cycles.
+func fetchProjectCycles(ctx *AppContext, project linear.Project) tea.Cmd {
+	return func() tea.Msg {
+		cycles, err := ctx.Client.GetProjectIssuesByCycles(project.ID)
+		if err != nil {
+			return ErrorMsg{Err: fmt.Errorf("fetch project cycles: %w", err)}
+		}
+		return appmsg.ProjectCyclesLoadedMsg{
+			ProjectName: project.Name,
+			Cycles:      cycles,
+		}
 	}
 }
 

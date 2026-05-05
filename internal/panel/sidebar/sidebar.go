@@ -15,8 +15,9 @@ import (
 
 // SectionTeams is the teams section of the sidebar.
 const (
-	SectionTeams   = 0
-	SectionFilters = 1
+	SectionTeams    = 0
+	SectionFilters  = 1
+	SectionProjects = 2
 )
 
 // Model is the sidebar panel.
@@ -24,11 +25,15 @@ type Model struct {
 	teams          []linear.Team
 	selectedTeam   int
 	cursor         int
-	section        int // 0 = teams, 1 = filters
+	section        int // 0 = teams, 1 = filters, 2 = projects
 	filterCursor   int
 	selectedFilter int
 	filters        []string
 	filterCounts   map[string]int
+
+	projects       []linear.Project
+	projectCursor  int
+	selectedProject int
 
 	focused       bool
 	width         int
@@ -157,6 +162,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.filterCounts = msg.Counts
 		return m, nil
 
+	case appmsg.LeadingProjectsLoadedMsg:
+		m.projects = msg.Projects
+		return m, nil
+
 	case appmsg.ErrorMsg:
 		// If we were loading teams and got an error, mark load as failed.
 		if m.loading {
@@ -187,6 +196,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	sectionBefore := m.section
 	switch msg.String() {
 	case "j", "down", "ctrl+n":
 		m.moveCursor(1)
@@ -202,7 +212,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "G":
 		// Go to bottom.
-		if len(m.filters) > 0 {
+		if len(m.projects) > 0 {
+			m.section = SectionProjects
+			m.projectCursor = len(m.projects) - 1
+		} else if len(m.filters) > 0 {
 			m.section = SectionFilters
 			m.filterCursor = len(m.filters) - 1
 		} else if len(m.teams) > 0 {
@@ -210,10 +223,19 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.cursor = len(m.teams) - 1
 		}
 
+	case "y":
+		if m.section == SectionProjects && m.projectCursor < len(m.projects) {
+			project := m.projects[m.projectCursor]
+			return m, func() tea.Msg {
+				return appmsg.CopyProjectIssuesMsg{Project: project}
+			}
+		}
+
 	case "l":
 		var cmds []tea.Cmd
 		if (m.section == SectionTeams && m.cursor != m.selectedTeam) ||
-			(m.section == SectionFilters && m.filterCursor != m.selectedFilter) {
+			(m.section == SectionFilters && m.filterCursor != m.selectedFilter) ||
+			(m.section == SectionProjects && m.projectCursor != m.selectedProject) {
 			newM, cmd1 := m.selectItem()
 			m = newM.(Model)
 			if cmd1 != nil {
@@ -230,13 +252,26 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.selectItem()
 	}
 
-	// Auto-select filter if we navigated to it
+	// Auto-select on navigation. When the section just changed (e.g. moving
+	// from filters into projects, or back), always fire so the right panel
+	// switches view; otherwise only fire when the cursor moved to a new item.
+	sectionChanged := m.section != sectionBefore
 	if m.section == SectionFilters {
 		switch msg.String() {
 		case "j", "down", "ctrl+n", "k", "up", "ctrl+p", "g", "G":
-			if m.filterCursor != m.selectedFilter {
+			if sectionChanged || m.filterCursor != m.selectedFilter {
 				return m.selectItem()
 			}
+		}
+	} else if m.section == SectionProjects {
+		switch msg.String() {
+		case "j", "down", "ctrl+n", "k", "up", "ctrl+p", "g", "G":
+			return m.selectItem()
+		}
+	} else if m.section == SectionTeams && sectionChanged {
+		switch msg.String() {
+		case "j", "down", "ctrl+n", "k", "up", "ctrl+p", "g", "G":
+			return m.selectItem()
 		}
 	}
 
@@ -262,17 +297,18 @@ func (m *Model) moveCursor(delta int) {
 			// Move to filters section.
 			if len(m.filters) > 0 {
 				m.section = SectionFilters
-				m.filterCursor = m.cursor - len(m.teams)
-				if m.filterCursor >= len(m.filters) {
-					m.filterCursor = len(m.filters) - 1
-				}
+				m.filterCursor = 0
 				m.filterCursor = m.nextSelectableFilter(m.filterCursor, 1)
+				m.cursor = len(m.teams) - 1
+			} else if len(m.projects) > 0 {
+				m.section = SectionProjects
+				m.projectCursor = 0
 				m.cursor = len(m.teams) - 1
 			} else {
 				m.cursor = len(m.teams) - 1
 			}
 		}
-	} else {
+	} else if m.section == SectionFilters {
 		next := m.filterCursor + delta
 		if next < 0 {
 			// Move back to teams section.
@@ -283,10 +319,34 @@ func (m *Model) moveCursor(delta int) {
 				m.filterCursor = m.nextSelectableFilter(0, 1)
 			}
 		} else if next >= len(m.filters) {
-			m.filterCursor = m.nextSelectableFilter(len(m.filters)-1, -1)
+			// Move to projects section.
+			if len(m.projects) > 0 {
+				m.section = SectionProjects
+				m.projectCursor = 0
+				m.filterCursor = len(m.filters) - 1
+			} else {
+				m.filterCursor = m.nextSelectableFilter(len(m.filters)-1, -1)
+			}
 		} else {
 			// Skip separators in the direction of movement.
 			m.filterCursor = m.nextSelectableFilter(next, delta)
+		}
+	} else {
+		// SectionProjects
+		m.projectCursor += delta
+		if m.projectCursor < 0 {
+			// Move back to filters section.
+			if len(m.filters) > 0 {
+				m.section = SectionFilters
+				m.filterCursor = len(m.filters) - 1
+				m.filterCursor = m.nextSelectableFilter(m.filterCursor, -1)
+			} else if len(m.teams) > 0 {
+				m.section = SectionTeams
+				m.cursor = len(m.teams) - 1
+			}
+			m.projectCursor = 0
+		} else if m.projectCursor >= len(m.projects) {
+			m.projectCursor = len(m.projects) - 1
 		}
 	}
 }
@@ -305,11 +365,18 @@ func (m Model) selectItem() (tea.Model, tea.Cmd) {
 			return appmsg.FilterSelectedMsg{Filter: filter}
 		}
 	}
+	if m.section == SectionProjects && m.projectCursor < len(m.projects) {
+		m.selectedProject = m.projectCursor
+		project := m.projects[m.projectCursor]
+		return m, func() tea.Msg {
+			return appmsg.ProjectSelectedMsg{Project: project}
+		}
+	}
 	return m, nil
 }
 
 func (m Model) totalItems() int {
-	return len(m.teams) + len(m.filters)
+	return len(m.teams) + len(m.filters) + len(m.projects)
 }
 
 // View implements tea.Model.
@@ -408,6 +475,37 @@ func (m Model) View() tea.View {
 			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
 		}
 		b.WriteString("  " + style.Render(label) + "\n")
+	}
+
+	// Separator.
+	if len(m.projects) > 0 {
+		sep := strings.Repeat("─", innerWidth)
+		b.WriteString(theme.SubtitleStyle.Render(sep) + "\n")
+
+		// Leading Projects title.
+		projectTitle := theme.TitleStyle.Render("Leading Projects")
+		b.WriteString(projectTitle + "\n")
+
+		for i, p := range m.projects {
+			label := truncate(p.Name, innerWidth-2)
+
+			if m.section == SectionProjects && i == m.projectCursor && m.focused {
+				line := lipgloss.NewStyle().
+					Background(lipgloss.Color("#7D56F4")).
+					Foreground(lipgloss.Color("#FFFFFF")).
+					Bold(true).
+					Width(innerWidth).
+					Render("  " + label)
+				b.WriteString(line + "\n")
+				continue
+			}
+
+			style := lipgloss.NewStyle()
+			if i == m.selectedProject {
+				style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
+			}
+			b.WriteString("  " + style.Render(label) + "\n")
+		}
 	}
 
 	content := b.String()

@@ -242,7 +242,32 @@ func (a App) handleCustomMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.ctx.CurrentTeam != nil {
 			cmds = append(cmds, fetchIssues(a.ctx, a.ctx.CurrentTeam.ID, a.activeFilter))
 		}
+		cmds = append(cmds, fetchLeadingProjects(a.ctx))
 		return a, tea.Batch(cmds...)
+
+	case appmsg.LeadingProjectsLoadedMsg:
+		updatedSidebar, cmd := a.sidebar.Update(msg)
+		a.sidebar = updatedSidebar.(sidebar.Model)
+		return a, cmd
+
+	case appmsg.CopyProjectIssuesMsg:
+		a.statusBar.SetSuccess(fmt.Sprintf("Fetching issues for %s...", msg.Project.Name))
+		return a, copyProjectIssues(a.ctx, msg.Project)
+
+	case appmsg.ProjectIssuesCopiedMsg:
+		a.statusBar.SetSuccess(fmt.Sprintf("Copied %d issues from %s to clipboard", msg.Count, msg.ProjectName))
+		return a, nil
+
+	case appmsg.CopyCycleIssuesMsg:
+		return a, copyCycleIssues(msg.Cycle, msg.Issues)
+
+	case appmsg.CycleIssuesCopiedMsg:
+		cycleStr := fmt.Sprintf("Cycle %d", msg.CycleNumber)
+		if msg.CycleName != "" {
+			cycleStr = fmt.Sprintf("Cycle %d (%s)", msg.CycleNumber, msg.CycleName)
+		}
+		a.statusBar.SetSuccess(fmt.Sprintf("Copied %d issues from %s to clipboard", msg.Count, cycleStr))
+		return a, nil
 
 	case TeamsLoadedMsg:
 		a.ctx.Teams = msg.Teams
@@ -291,6 +316,12 @@ func (a App) handleCustomMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, fetchIssues(a.ctx, a.ctx.CurrentTeam.ID, a.activeFilter))
 		}
 		return a, tea.Batch(cmds...)
+
+	case appmsg.ProjectSelectedMsg:
+		a.statusBar.SetSuccess("Fetching cycles for " + msg.Project.Name + "...")
+		updatedMain, cmd1 := a.mainPanel.Update(msg)
+		a.mainPanel = updatedMain.(mainpanel.Model)
+		return a, tea.Batch(cmd1, fetchProjectCycles(a.ctx, msg.Project))
 
 	case FilterCountsMsg:
 		a.sidebar.SetFilterCounts(msg.Counts)
