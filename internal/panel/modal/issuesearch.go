@@ -3,6 +3,8 @@ package modal
 import (
 	"fmt"
 	"io"
+	"regexp"
+	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
@@ -14,11 +16,22 @@ import (
 	appmsg "github.com/denislee/lazylinear/internal/msg"
 )
 
+// issueIdentifierPattern matches a full Linear issue identifier such as
+// "TECH-12762".
+var issueIdentifierPattern = regexp.MustCompile(`^[A-Za-z]+-\d+$`)
+
+const searchTitle = "Search My Issues"
+
 // IssueSearchModel is a modal for searching issues.
 type IssueSearchModel struct {
 	list   list.Model
 	width  int
 	height int
+
+	// lookupIdentifier is the identifier-shaped query (e.g. "TECH-12762") we've
+	// last requested a direct API lookup for, since the locally-loaded list
+	// only contains a recent subset of issues assigned to the current user.
+	lookupIdentifier string
 }
 
 // SearchItem wraps a linear.Issue for the search list.
@@ -70,10 +83,10 @@ func NewIssueSearch(issues []linear.Issue, width, height int) IssueSearchModel {
 
 	delegate := SearchDelegate{}
 	l := list.New(items, delegate, width-10, height-10)
-	l.Title = "Search My Issues"
+	l.Title = searchTitle
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
-	
+
 	// Disable the default quit bindings so it doesn't conflict with the app
 	l.KeyMap.Quit.SetEnabled(false)
 	l.KeyMap.ForceQuit.SetEnabled(false)
@@ -113,6 +126,18 @@ type IssueSearchConfirmedMsg struct {
 // Update handles messages for the search modal.
 func (m IssueSearchModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 	switch msg := msg.(type) {
+	case appmsg.IssueLookupResultMsg:
+		if msg.Identifier != m.lookupIdentifier {
+			// Stale result for a query the user has since changed; ignore.
+			return m, nil
+		}
+		if msg.Err != nil || msg.Issue == nil {
+			m.list.Title = fmt.Sprintf("%s (%s not found)", searchTitle, msg.Identifier)
+			return m, nil
+		}
+		m.list.Title = searchTitle
+		return m, m.list.InsertItem(0, SearchItem{Issue: *msg.Issue})
+
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "esc", "ctrl+[":
@@ -142,7 +167,46 @@ func (m IssueSearchModel) Update(msg tea.Msg) (SubModal, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
-	return m, cmd
+
+	cmds := []tea.Cmd{cmd}
+	if lookupCmd := m.maybeLookupIdentifier(); lookupCmd != nil {
+		cmds = append(cmds, lookupCmd)
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// maybeLookupIdentifier returns a command that fetches an issue directly by
+// identifier when the current filter text looks like a full issue code (e.g.
+// "TECH-12762") and no locally-loaded issue matches it. The search list only
+// contains a recent subset of issues assigned to the current user, so a
+// direct lookup is needed to find issues outside that set. Returns nil if no
+// lookup is needed.
+func (m *IssueSearchModel) maybeLookupIdentifier() tea.Cmd {
+	if m.list.FilterState() != list.Filtering {
+		return nil
+	}
+
+	text := strings.ToUpper(strings.TrimSpace(m.list.FilterValue()))
+	if !issueIdentifierPattern.MatchString(text) {
+		if m.lookupIdentifier != "" {
+			m.lookupIdentifier = ""
+			m.list.Title = searchTitle
+		}
+		return nil
+	}
+
+	if text == m.lookupIdentifier {
+		return nil
+	}
+	if len(m.list.VisibleItems()) > 0 {
+		return nil
+	}
+
+	m.lookupIdentifier = text
+	m.list.Title = fmt.Sprintf("%s (looking up %s...)", searchTitle, text)
+	return func() tea.Msg {
+		return appmsg.LookupIssueByIdentifierMsg{Identifier: text}
+	}
 }
 
 // View renders the search modal.

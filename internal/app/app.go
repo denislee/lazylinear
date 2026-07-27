@@ -28,19 +28,19 @@ const (
 
 // App is the root Bubble Tea model.
 type App struct {
-	ctx                 *AppContext
-	sidebar             sidebar.Model
-	mainPanel           mainpanel.Model
-	statusBar           statusbar.Model
-	modal               modal.Model
-	layout              Layout
-	focus               PanelID
-	ready               bool
-	showHelp            bool
-	activeFilter        string        // current filter: "My Issues", "All Issues", "Active"
-	pendingIssue        *linear.Issue // issue awaiting workflow states for status change
-	pendingEditIssue    *linear.Issue // issue awaiting metadata for edit modal
-	pendingCreateIssue  bool          // whether we are waiting for metadata to create an issue
+	ctx                     *AppContext
+	sidebar                 sidebar.Model
+	mainPanel               mainpanel.Model
+	statusBar               statusbar.Model
+	modal                   modal.Model
+	layout                  Layout
+	focus                   PanelID
+	ready                   bool
+	showHelp                bool
+	activeFilter            string        // current filter: "My Issues", "All Issues", "Active"
+	pendingIssue            *linear.Issue // issue awaiting workflow states for status change
+	pendingEditIssue        *linear.Issue // issue awaiting metadata for edit modal
+	pendingCreateIssue      bool          // whether we are waiting for metadata to create an issue
 	autoLabelingIssues      []linear.Issue
 	autoLabelingIndex       int
 	autoLabelingSuggestions map[string]string
@@ -411,6 +411,9 @@ func (a App) handleCustomMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.statusBar.ClearSuccess()
 		a.modal.OpenIssueSearch(msg.Issues)
 		return a, nil
+
+	case LookupIssueByIdentifierMsg:
+		return a, lookupIssueByIdentifier(a.ctx, msg.Identifier)
 
 	case modal.IssueSearchConfirmedMsg:
 		a.modal.Close()

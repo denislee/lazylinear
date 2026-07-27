@@ -150,6 +150,21 @@ func fetchMyIssues(ctx *AppContext) tea.Cmd {
 	}
 }
 
+// lookupIssueByIdentifier returns a command that fetches a single issue directly
+// by its human-readable identifier (e.g. "TECH-123"), used as a fallback in the
+// search modal when the identifier isn't among the locally-loaded "my issues".
+// Linear's issue query accepts either the identifier or the UUID and isn't scoped
+// to a team, so this can find any issue the current API key can access.
+func lookupIssueByIdentifier(ctx *AppContext, identifier string) tea.Cmd {
+	return func() tea.Msg {
+		issue, err := ctx.Client.GetIssue(identifier)
+		if err != nil {
+			return appmsg.IssueLookupResultMsg{Identifier: identifier, Err: err}
+		}
+		return appmsg.IssueLookupResultMsg{Identifier: identifier, Issue: issue}
+	}
+}
+
 // fetchIssues returns a command that fetches issues for the given team with an optional status filter.
 func fetchIssues(ctx *AppContext, teamID string, filterName string) tea.Cmd {
 	filter := buildIssueFilter(filterName, ctx.CurrentUser, ctx.CurrentProjects)
@@ -391,12 +406,12 @@ func editIssue(ctx *AppContext, confirmed IssueEditConfirmedMsg) tea.Cmd {
 
 // autoTagIssues returns a command that auto-tags issues using Gemini CLI.
 // It mirrors the logic of linear_labeler.py:
-//   1. Fetch every label in the workspace (paginated).
-//   2. Build team-specific + org-wide label name->id maps (skipping group labels).
-//   3. Use all discovered label names as allowed categories.
-//   4. Ask Gemini once for all issues in a single batch call.
-//   5. Parse "ID: Category" lines, preferring the longest matching label name.
-//   6. Apply suggestions, creating team labels on demand if missing.
+//  1. Fetch every label in the workspace (paginated).
+//  2. Build team-specific + org-wide label name->id maps (skipping group labels).
+//  3. Use all discovered label names as allowed categories.
+//  4. Ask Gemini once for all issues in a single batch call.
+//  5. Parse "ID: Category" lines, preferring the longest matching label name.
+//  6. Apply suggestions, creating team labels on demand if missing.
 func autoTagIssues(ctx *AppContext, issues []linear.Issue) tea.Cmd {
 	if len(issues) == 0 {
 		return nil

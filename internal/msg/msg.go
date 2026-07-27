@@ -69,6 +69,22 @@ type MyIssuesLoadedMsg struct {
 	Issues []linear.Issue
 }
 
+// LookupIssueByIdentifierMsg is sent by the search modal to request a direct
+// API lookup of a single issue by its human-readable identifier (e.g.
+// "TECH-123"), used as a fallback when the identifier isn't present among
+// the locally-loaded issues.
+type LookupIssueByIdentifierMsg struct {
+	Identifier string
+}
+
+// IssueLookupResultMsg carries the result of a direct issue identifier lookup.
+// Issue is nil if no issue was found with that identifier.
+type IssueLookupResultMsg struct {
+	Identifier string
+	Issue      *linear.Issue
+	Err        error
+}
+
 // ModalClosedMsg is sent when a modal is closed.
 type ModalClosedMsg struct{}
 
